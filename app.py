@@ -28,50 +28,57 @@ def get_data():
         st.error(f"資料庫連線失敗: {e}")
         return pd.DataFrame()
 
-# --- 自定義的小型數據卡片 (HTML) ---
+# --- 自定義數據卡片 (HTML) ---
 def display_card(label, value, color="black", help_text=""):
-    """
-    用 HTML 渲染一個比 st.metric 更小的數據卡片
-    """
     tooltip_html = f'title="{help_text}"' if help_text else ''
     st.markdown(f"""
         <div style="
             background-color: white;
-            padding: 10px;
-            border-radius: 5px;
+            padding: 10px 5px; /* 上下10px, 左右5px (更緊湊) */
+            border-radius: 8px;
             border: 1px solid #e0e0e0;
             text-align: center;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
             " {tooltip_html}>
             <div style="font-size: 0.85rem; color: #666; margin-bottom: 2px;">{label}</div>
-            <div style="font-size: 1.8rem; font-weight: bold; color: {color};">{value}</div>
+            <div style="font-size: 1.8rem; font-weight: bold; color: {color}; line-height: 1.1;">{value}</div>
         </div>
     """, unsafe_allow_html=True)
 
 # --- 主程式 ---
 def main():
-    # 1. 客製化標題區 (標題變小 + 副標題移到後面)
+    # 1. CSS 全局樣式調整 (關鍵修改區)
     st.markdown("""
         <style>
+            /* 縮減頁面整體的邊界留白 (讓內容往上、往左右滿版) */
+            .block-container {
+                padding-top: 1rem;    /* 頂部留白大幅減少 */
+                padding-bottom: 1rem;
+                padding-left: 1rem;
+                padding-right: 1rem;
+            }
+            
+            /* 標題區塊樣式 */
             .header-container {
                 display: flex;
-                align-items: baseline; /* 讓文字底部對齊 */
-                padding-bottom: 10px;
+                align-items: baseline;
+                padding-bottom: 8px;
                 border-bottom: 1px solid #eee;
-                margin-bottom: 20px;
+                margin-bottom: 15px; /* 標題與數據卡的距離 */
             }
             .main-title {
-                font-size: 1.8rem; /* 比原本 st.title 小 */
+                font-size: 1.5rem; /* 字體稍微調小一點點以適應緊湊版面 */
                 font-weight: bold;
                 color: #333;
-                margin-right: 15px;
+                margin-right: 12px;
             }
             .sub-title {
-                font-size: 0.9rem;
+                font-size: 0.8rem;
                 color: #888;
                 font-weight: normal;
             }
         </style>
+        
         <div class="header-container">
             <span class="main-title">📊 台股期貨自動分析系統</span>
             <span class="sub-title">數據來源：期交所/證交所 | 自動更新</span>
@@ -85,7 +92,6 @@ def main():
         df['Date'] = pd.to_datetime(df['Date'])
         df = df.sort_values(by="Date")
 
-        # 強制轉數值
         numeric_cols = ['Open', 'High', 'Low', 'Close', 
                         'Upper_Pass', 'Mid_Pass', 'Lower_Pass', 'Divider', 
                         'Long_Cost', 'Short_Cost', 'Sell_Pressure']
@@ -102,7 +108,7 @@ def main():
             except:
                 return "0"
 
-        # --- 2. 頂部資訊看板 (使用自定義卡片) ---
+        # --- 2. 頂部資訊看板 ---
         
         c1, c2, c3, c4, c5 = st.columns(5)
         
@@ -117,7 +123,6 @@ def main():
             u = fmt(last_row.get('Upper_Pass', 0))
             m = fmt(last_row.get('Mid_Pass', 0))
             l = fmt(last_row.get('Lower_Pass', 0))
-            # 字體太長時，HTML 會自動換行或縮小，比 st.metric 更有彈性
             display_card("🔮 明日三關價", f"{u}/{m}/{l}", color="#555")
             
         with c4:
@@ -126,11 +131,10 @@ def main():
         with c5:
             display_card("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)), color="#00b894")
 
-        # --- 3. 繪圖 (極簡乾淨版) ---
+        # --- 3. 繪圖 ---
         
         df_chart = df.tail(60).set_index("Date")
         
-        # K線圖樣式
         mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
         
@@ -138,9 +142,8 @@ def main():
         if 'Sell_Pressure' in df_chart.columns:
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='', alpha=0.3))
         
-        # 這裡加入一個間距，讓圖表跟上面的卡片分開一點點
-        st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
-
+        # 移除了 margin-top div，讓圖表直接貼在數據卡下方
+        
         fig, ax = mpf.plot(
             df_chart, 
             type='candle', 
