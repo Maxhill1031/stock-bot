@@ -78,23 +78,27 @@ def main():
 
         last_row = df.iloc[-1]
         
-        # --- 計算上個月的「賣壓」最大與最小 ---
+        # --- 1. 計算「上個月」的賣壓極值與發生日期 ---
         current_date = last_row['Date']
         first_day_this_month = current_date.replace(day=1)
         last_day_prev_month = first_day_this_month - timedelta(days=1)
         target_year = last_day_prev_month.year
         target_month = last_day_prev_month.month
         
+        # 篩選上個月資料
         mask = (df['Date'].dt.year == target_year) & (df['Date'].dt.month == target_month)
         prev_month_df = df[mask]
         
-        # ★ 計算賣壓極值 (確保是浮點數)
         if not prev_month_df.empty:
-            pressure_max = float(prev_month_df['Sell_Pressure'].max())
-            pressure_min = float(prev_month_df['Sell_Pressure'].min())
+            # 數值
+            p_max = float(prev_month_df['Sell_Pressure'].max())
+            p_min = float(prev_month_df['Sell_Pressure'].min())
+            # 發生日期 (重要：用來決定線畫到哪裡)
+            date_max = prev_month_df.loc[prev_month_df['Sell_Pressure'].idxmax(), 'Date']
+            date_min = prev_month_df.loc[prev_month_df['Sell_Pressure'].idxmin(), 'Date']
         else:
-            pressure_max = 0.0
-            pressure_min = 0.0
+            p_max, p_min = 0.0, 0.0
+            date_max, date_min = current_date, current_date
 
         def fmt(val):
             try: return str(int(val))
@@ -108,29 +112,24 @@ def main():
         with c4: display_card("🔴 外資多方成本", fmt(last_row.get('Long_Cost', 0)), color="#d63031")
         with c5: display_card("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)), color="#00b894")
 
-        # --- 3. 繪圖 (賣壓極值版) ---
+        # --- 3. 繪圖 ---
         df_chart = df.tail(60).set_index("Date")
         
-        # 準備畫線資料
-        p_max_line = [pressure_max] * len(df_chart)
-        p_min_line = [pressure_min] * len(df_chart)
+        # 線段設定：[ [(起點, 數值), (終點, 數值)], ... ]
+        # 起點：圖表最左邊 (df_chart.index[0])
+        # 終點：上個月發生的那一天 (date_max / date_min)
+        lines_seq = [
+            [(df_chart.index[0], p_max), (date_max, p_max)], # 上月最高 (紅)
+            [(df_chart.index[0], p_min), (date_min, p_min)]  # 上月最低 (綠)
+        ]
+        lines_colors = ['red', 'green']
 
         mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
         
         add_plots = []
-        
-        # (1) 賣壓 Bar (Panel 1)
         if 'Sell_Pressure' in df_chart.columns:
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='', alpha=0.3))
-        
-        # (2) ★ 上月賣壓最大值 (紅色虛線, Panel 1)
-        if pressure_max > 0:
-            add_plots.append(mpf.make_addplot(p_max_line, panel=1, color='red', linestyle='--', width=1.2))
-            
-        # (3) ★ 上月賣壓最小值 (綠色虛線, Panel 1)
-        if pressure_min > 0: # 賣壓可能為0或負嗎? 假設大於0才畫，或只要有值就畫
-            add_plots.append(mpf.make_addplot(p_min_line, panel=1, color='green', linestyle='--', width=1.2))
 
         try:
             fig, axlist = mpf.plot(
@@ -140,6 +139,8 @@ def main():
                 title="", 
                 ylabel='', 
                 addplot=add_plots, 
+                # 使用 alines 畫指定長度的線
+                alines=dict(alines=lines_seq, colors=lines_colors, linestyle='dashed', linewidths=1.5),
                 volume=False, 
                 panel_ratios=(3, 1), 
                 returnfig=True,
@@ -156,31 +157,27 @@ def main():
                     xtick_labels.append(date_val.strftime('%Y-%m-%d'))
             axlist[0].set_xticks(xtick_locs)
             axlist[0].set_xticklabels(xtick_labels)
-            
-            # ★ 關鍵：在 Panel 1 (副圖) 的 Y 軸上標註數值
-            # axlist[0] 是主圖, axlist[2] 通常是 Panel 1 (因為 mpf 內部結構關係)
-            # 我們嘗試找出 panel 1 的軸
+
+            # ★ 副圖 Y 軸與數值標註
             if len(axlist) > 2:
-                ax_pressure = axlist[2] 
+                ax_pressure = axlist[2]
                 
-                # 標註最大值 (紅色)
+                # 1. 取消預設標值
+                ax_pressure.set_yticks([]) 
+                
+                # 2. 標註數值 (使用 len(df_chart) 讓文字顯示在圖表右側外)
+                # 紅色最高值
                 ax_pressure.text(
-                    len(df_chart)+0.5, pressure_max, 
-                    f'{pressure_max:.1f}', 
-                    color='red', 
-                    verticalalignment='center', 
-                    fontsize=9, 
-                    fontweight='bold'
+                    len(df_chart) + 0.5, p_max, 
+                    f'{p_max:.1f}', 
+                    color='red', va='center', fontsize=10, fontweight='bold'
                 )
                 
-                # 標註最小值 (綠色)
+                # 綠色最低值
                 ax_pressure.text(
-                    len(df_chart)+0.5, pressure_min, 
-                    f'{pressure_min:.1f}', 
-                    color='green', 
-                    verticalalignment='center', 
-                    fontsize=9, 
-                    fontweight='bold'
+                    len(df_chart) + 0.5, p_min, 
+                    f'{p_min:.1f}', 
+                    color='green', va='center', fontsize=10, fontweight='bold'
                 )
 
             st.pyplot(fig, use_container_width=True)
