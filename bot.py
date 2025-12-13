@@ -4,7 +4,6 @@ import datetime
 import os
 import json
 import io
-import time
 import urllib3
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -41,14 +40,13 @@ def clean_number(x):
 def fetch_data_and_save():
     print("🚀 GitHub Action Bot 開始執行...")
     
-    # 邏輯：永遠抓今天的日期，若為週末則不執行
     target_date = datetime.date.today()
     if target_date.weekday() >= 5:
         print("今天是週末，Bot 休息。")
         return
 
     date_slash = target_date.strftime("%Y/%m/%d")
-    date_db = target_date.strftime("%Y-%m-%d") # 存入 Sheet 的格式
+    date_db = target_date.strftime("%Y-%m-%d")
     print(f"目標日期: {date_db}")
 
     # 1. 抓取行情 (含三關價 & 多空分界)
@@ -70,18 +68,18 @@ def fetch_data_and_save():
                     low_p = clean_number(d[4])
                     close_p = clean_number(d[5])
                     
-                    # --- 計算三關價 (給隔天用) ---
+                    # --- 計算隔日參考價 (皆四捨五入取整數) ---
+                    # 1. 三關價
                     upper = int(round(low_p + (high_p - low_p) * 1.382))
                     mid = int(round((high_p + low_p) / 2))
                     lower = int(round(high_p - (high_p - low_p) * 1.382))
                     
-                    # --- ★新增計算：多空分界線 (當日用) ---
-                    # 公式：(開盤 + 最低 + 收盤) / 3，並取整數
+                    # 2. 多空分界線 = (開+低+收)/3
                     divider = int(round((open_p + low_p + close_p) / 3))
                     
-                    # 儲存結構: [開, 高, 低, 收, 上, 中, 下, 分界]
+                    # 順序: 開, 高, 低, 收, 上, 中, 下, 分界
                     ohlc_data = [open_p, high_p, low_p, close_p, upper, mid, lower, divider]
-                    print(f"✅ 行情抓取成功: 收{close_p} 分界{divider}")
+                    print(f"✅ 行情抓取: 收{close_p} | 明日分界{divider}")
     except Exception as e:
         print(f"❌ 行情抓取失敗: {e}")
 
@@ -115,7 +113,6 @@ def fetch_data_and_save():
                                 if str(v).strip() == "外資":
                                     start_idx = i
                                     break
-                            
                             idx_base = start_idx if start_idx != -1 else 2
                             
                             l_vol = clean_number(vals[idx_base+1])
@@ -125,14 +122,14 @@ def fetch_data_and_save():
                             
                             if l_vol > 0: long_cost = int(round((l_amt*1000)/l_vol/200))
                             if s_vol > 0: short_cost = int(round((s_amt*1000)/s_vol/200))
-                            print(f"✅ 籌碼抓取成功: 多本{long_cost} 空本{short_cost}")
+                            print(f"✅ 籌碼抓取: 多本{long_cost} 空本{short_cost}")
                         except:
                             pass
                         break
     except Exception as e:
         print(f"❌ 籌碼抓取失敗: {e}")
 
-    # 3. 抓取賣壓 (簡化處理)
+    # 3. 抓取賣壓
     pressure = 0
     try:
         url_twse = f"https://www.twse.com.tw/exchangeReport/MI_5MINS?response=json&date={target_date.strftime('%Y%m%d')}"
@@ -150,7 +147,7 @@ def fetch_data_and_save():
     # 4. 寫入 Google Sheet
     sheet = get_google_sheet()
     if sheet:
-        # 欄位順序: Date, Open, High, Low, Close, Upper, Mid, Lower, ★Divider, Long_Cost, Short_Cost, Pressure
+        # 寫入順序: Date, Open, High, Low, Close, Upper, Mid, Lower, Divider, Long_Cost, Short_Cost, Pressure
         row = [date_db] + ohlc_data + [long_cost, short_cost, pressure]
         
         try:
@@ -160,7 +157,7 @@ def fetch_data_and_save():
                 print("⚠️ 今日資料已存在，跳過寫入。")
             else:
                 sheet.append_row(row)
-                print(f"🎉 資料已寫入 (含多空分界): {row}")
+                print(f"🎉 資料已寫入: {row}")
         except Exception as e:
             print(f"Google Sheet 寫入錯誤: {e}")
 
