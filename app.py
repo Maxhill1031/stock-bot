@@ -40,7 +40,7 @@ def main():
         df['Date'] = pd.to_datetime(df['Date'])
         df = df.sort_values(by="Date")
 
-        # 強制轉數值 (包含 Divider)
+        # 強制轉數值
         numeric_cols = ['Open', 'High', 'Low', 'Close', 
                         'Upper_Pass', 'Mid_Pass', 'Lower_Pass', 'Divider', 
                         'Long_Cost', 'Short_Cost', 'Sell_Pressure']
@@ -51,7 +51,6 @@ def main():
 
         last_row = df.iloc[-1]
         
-        # 輔助函式: 轉整數字串
         def fmt(val):
             try:
                 return str(int(val))
@@ -81,8 +80,8 @@ def main():
         with c5:
             st.metric("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)))
 
-        # --- 3. 繪圖 (調整尺寸版) ---
-        st.subheader("歷史趨勢圖 (僅 K 棒與賣壓)")
+        # --- 3. 繪圖 (無標題緊湊版) ---
+        # ★ 已刪除 st.subheader(...)，這樣圖表就會直接往上貼
         
         df_chart = df.tail(60).set_index("Date")
         
@@ -90,26 +89,24 @@ def main():
         mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
         
-        # 附加圖表：只保留「賣壓」
         add_plots = []
         if 'Sell_Pressure' in df_chart.columns:
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='Pressure', alpha=0.3))
         
-        # ★ 修改處：figsize 改為 (10, 5)，讓高度變矮，不用一直下拉
         fig, ax = mpf.plot(
             df_chart, 
             type='candle', 
             style=s, 
-            title=f"Taifex Futures Daily K-Line",
+            title=f"Taifex Futures Daily K-Line", # 保留圖內小標題，若完全不想看到可改成 title=""
             ylabel='Price',
             addplot=add_plots, 
             volume=False, 
             panel_ratios=(3, 1), 
             returnfig=True, 
-            figsize=(10, 5) 
+            figsize=(10, 5),
+            tight_layout=True # ★ 加入這個參數，讓圖表邊距更少，看起來更緊湊
         )
         
-        # ★ 修改處：加入 use_container_width=True 讓寬度自適應
         st.pyplot(fig, use_container_width=True)
         
         # --- 4. 數據表格 ---
