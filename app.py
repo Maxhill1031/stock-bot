@@ -59,7 +59,6 @@ def main():
                 return "0"
 
         # --- 2. 頂部資訊看板 (Metrics) ---
-        # 這裡放置所有數值，供隔日操作參考
         
         c1, c2, c3, c4, c5 = st.columns(5)
         
@@ -67,12 +66,10 @@ def main():
             st.metric("📅 最新日期", last_row['Date'].strftime("%Y-%m-%d"))
         
         with c2:
-            # 顯示明日多空分界 (不畫圖，純數值)
             div_val = fmt(last_row.get('Divider', 0))
             st.metric("⚖️ 明日多空分界", div_val, help="(開+低+收)/3")
 
         with c3:
-            # 顯示明日三關價
             u = fmt(last_row.get('Upper_Pass', 0))
             m = fmt(last_row.get('Mid_Pass', 0))
             l = fmt(last_row.get('Lower_Pass', 0))
@@ -84,7 +81,7 @@ def main():
         with c5:
             st.metric("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)))
 
-        # --- 3. 繪圖 (乾淨版) ---
+        # --- 3. 繪圖 (調整尺寸版) ---
         st.subheader("歷史趨勢圖 (僅 K 棒與賣壓)")
         
         df_chart = df.tail(60).set_index("Date")
@@ -98,7 +95,7 @@ def main():
         if 'Sell_Pressure' in df_chart.columns:
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='Pressure', alpha=0.3))
         
-        # 繪圖 (不畫任何線)
+        # ★ 修改處：figsize 改為 (10, 5)，讓高度變矮，不用一直下拉
         fig, ax = mpf.plot(
             df_chart, 
             type='candle', 
@@ -109,10 +106,11 @@ def main():
             volume=False, 
             panel_ratios=(3, 1), 
             returnfig=True, 
-            figsize=(12, 8)
+            figsize=(10, 5) 
         )
         
-        st.pyplot(fig)
+        # ★ 修改處：加入 use_container_width=True 讓寬度自適應
+        st.pyplot(fig, use_container_width=True)
         
         # --- 4. 數據表格 ---
         with st.expander("查看詳細歷史數據"):
