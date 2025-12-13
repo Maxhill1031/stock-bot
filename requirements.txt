@@ -1,0 +1,7 @@
+streamlit
+pandas
+requests
+mplfinance
+gspread
+oauth2client
+lxml
