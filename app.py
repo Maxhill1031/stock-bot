@@ -34,7 +34,7 @@ def display_card(label, value, color="black", help_text=""):
     st.markdown(f"""
         <div style="
             background-color: white;
-            padding: 10px 5px; /* 上下10px, 左右5px (更緊湊) */
+            padding: 10px 5px;
             border-radius: 8px;
             border: 1px solid #e0e0e0;
             text-align: center;
@@ -47,27 +47,24 @@ def display_card(label, value, color="black", help_text=""):
 
 # --- 主程式 ---
 def main():
-    # 1. CSS 全局樣式調整 (關鍵修改區)
+    # 1. CSS 全局樣式調整 (緊湊版面)
     st.markdown("""
         <style>
-            /* 縮減頁面整體的邊界留白 (讓內容往上、往左右滿版) */
             .block-container {
-                padding-top: 1rem;    /* 頂部留白大幅減少 */
+                padding-top: 1rem;
                 padding-bottom: 1rem;
                 padding-left: 1rem;
                 padding-right: 1rem;
             }
-            
-            /* 標題區塊樣式 */
             .header-container {
                 display: flex;
                 align-items: baseline;
                 padding-bottom: 8px;
                 border-bottom: 1px solid #eee;
-                margin-bottom: 15px; /* 標題與數據卡的距離 */
+                margin-bottom: 15px;
             }
             .main-title {
-                font-size: 1.5rem; /* 字體稍微調小一點點以適應緊湊版面 */
+                font-size: 1.5rem;
                 font-weight: bold;
                 color: #333;
                 margin-right: 12px;
@@ -109,7 +106,6 @@ def main():
                 return "0"
 
         # --- 2. 頂部資訊看板 ---
-        
         c1, c2, c3, c4, c5 = st.columns(5)
         
         with c1:
@@ -131,8 +127,7 @@ def main():
         with c5:
             display_card("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)), color="#00b894")
 
-        # --- 3. 繪圖 ---
-        
+        # --- 3. 繪圖 (X軸客製化版) ---
         df_chart = df.tail(60).set_index("Date")
         
         mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
@@ -142,9 +137,8 @@ def main():
         if 'Sell_Pressure' in df_chart.columns:
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='', alpha=0.3))
         
-        # 移除了 margin-top div，讓圖表直接貼在數據卡下方
-        
-        fig, ax = mpf.plot(
+        # 繪圖並取回 fig, axlist
+        fig, axlist = mpf.plot(
             df_chart, 
             type='candle', 
             style=s, 
@@ -153,10 +147,25 @@ def main():
             addplot=add_plots, 
             volume=False, 
             panel_ratios=(3, 1), 
-            returnfig=True, 
+            returnfig=True,  # 必須設為 True 才能操作座標軸
             figsize=(10, 5),
             tight_layout=True
         )
+
+        # ★ 關鍵修改：手動設定 X 軸刻度 (只顯示週一，且用純數字格式)
+        xtick_locs = []
+        xtick_labels = []
+
+        # 遍歷資料索引，找出是「週一」的日期
+        for i, date_val in enumerate(df_chart.index):
+            if date_val.weekday() == 0: # 0 代表星期一
+                xtick_locs.append(i)
+                # 格式化為 "YYYY-MM-DD" (例如 2025-12-15)
+                xtick_labels.append(date_val.strftime('%Y-%m-%d'))
+        
+        # axlist[0] 是主要的 K 線圖 Axes
+        axlist[0].set_xticks(xtick_locs)
+        axlist[0].set_xticklabels(xtick_labels) # 不旋轉，保持水平顯示較清楚
         
         st.pyplot(fig, use_container_width=True)
         
