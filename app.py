@@ -47,7 +47,7 @@ def display_card(label, value, color="black", help_text=""):
 
 # --- 主程式 ---
 def main():
-    # 1. CSS 全局樣式調整 (緊湊版面)
+    # 1. CSS 全局樣式調整
     st.markdown("""
         <style>
             .block-container {
@@ -127,7 +127,7 @@ def main():
         with c5:
             display_card("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)), color="#00b894")
 
-        # --- 3. 繪圖 (X軸客製化版) ---
+        # --- 3. 繪圖 (X軸 5天標記版) ---
         df_chart = df.tail(60).set_index("Date")
         
         mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
@@ -137,7 +137,6 @@ def main():
         if 'Sell_Pressure' in df_chart.columns:
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='', alpha=0.3))
         
-        # 繪圖並取回 fig, axlist
         fig, axlist = mpf.plot(
             df_chart, 
             type='candle', 
@@ -147,25 +146,23 @@ def main():
             addplot=add_plots, 
             volume=False, 
             panel_ratios=(3, 1), 
-            returnfig=True,  # 必須設為 True 才能操作座標軸
+            returnfig=True,
             figsize=(10, 5),
             tight_layout=True
         )
 
-        # ★ 關鍵修改：手動設定 X 軸刻度 (只顯示週一，且用純數字格式)
+        # ★ 關鍵修改：手動設定 X 軸刻度 (每 5 天標記一次)
         xtick_locs = []
         xtick_labels = []
 
-        # 遍歷資料索引，找出是「週一」的日期
         for i, date_val in enumerate(df_chart.index):
-            if date_val.weekday() == 0: # 0 代表星期一
+            # i % 5 == 0 代表索引是 0, 5, 10, 15... 時才標記
+            if i % 5 == 0:
                 xtick_locs.append(i)
-                # 格式化為 "YYYY-MM-DD" (例如 2025-12-15)
                 xtick_labels.append(date_val.strftime('%Y-%m-%d'))
         
-        # axlist[0] 是主要的 K 線圖 Axes
         axlist[0].set_xticks(xtick_locs)
-        axlist[0].set_xticklabels(xtick_labels) # 不旋轉，保持水平顯示較清楚
+        axlist[0].set_xticklabels(xtick_labels) 
         
         st.pyplot(fig, use_container_width=True)
         
