@@ -85,15 +85,12 @@ def main():
         target_year = last_day_prev_month.year
         target_month = last_day_prev_month.month
         
-        # 篩選上個月資料
         mask = (df['Date'].dt.year == target_year) & (df['Date'].dt.month == target_month)
         prev_month_df = df[mask]
         
         if not prev_month_df.empty:
-            # 數值
             p_max = float(prev_month_df['Sell_Pressure'].max())
             p_min = float(prev_month_df['Sell_Pressure'].min())
-            # 發生日期 (重要：用來決定線畫到哪裡)
             date_max = prev_month_df.loc[prev_month_df['Sell_Pressure'].idxmax(), 'Date']
             date_min = prev_month_df.loc[prev_month_df['Sell_Pressure'].idxmin(), 'Date']
         else:
@@ -115,15 +112,6 @@ def main():
         # --- 3. 繪圖 ---
         df_chart = df.tail(60).set_index("Date")
         
-        # 線段設定：[ [(起點, 數值), (終點, 數值)], ... ]
-        # 起點：圖表最左邊 (df_chart.index[0])
-        # 終點：上個月發生的那一天 (date_max / date_min)
-        lines_seq = [
-            [(df_chart.index[0], p_max), (date_max, p_max)], # 上月最高 (紅)
-            [(df_chart.index[0], p_min), (date_min, p_min)]  # 上月最低 (綠)
-        ]
-        lines_colors = ['red', 'green']
-
         mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
         
@@ -132,6 +120,7 @@ def main():
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='', alpha=0.3))
 
         try:
+            # ★ 移除 mpf.plot 裡的 alines 參數 (因為它無法指定 panel)
             fig, axlist = mpf.plot(
                 df_chart, 
                 type='candle', 
@@ -139,8 +128,6 @@ def main():
                 title="", 
                 ylabel='', 
                 addplot=add_plots, 
-                # 使用 alines 畫指定長度的線
-                alines=dict(alines=lines_seq, colors=lines_colors, linestyle='dashed', linewidths=1.5),
                 volume=False, 
                 panel_ratios=(3, 1), 
                 returnfig=True,
@@ -158,22 +145,41 @@ def main():
             axlist[0].set_xticks(xtick_locs)
             axlist[0].set_xticklabels(xtick_labels)
 
-            # ★ 副圖 Y 軸與數值標註
+            # --- ★ 關鍵修正：手動在副圖畫線 ---
             if len(axlist) > 2:
-                ax_pressure = axlist[2]
+                ax_pressure = axlist[2] # 這是副圖的 Axes
                 
-                # 1. 取消預設標值
-                ax_pressure.set_yticks([]) 
+                # 1. 找出日期對應的整數 X 座標
+                try:
+                    idx_max = df_chart.index.get_loc(date_max)
+                except KeyError:
+                    # 如果上個月最高點的日期已經不在這 60 天內，就畫到最左邊 (或不畫)
+                    idx_max = 0 
                 
-                # 2. 標註數值 (使用 len(df_chart) 讓文字顯示在圖表右側外)
-                # 紅色最高值
+                try:
+                    idx_min = df_chart.index.get_loc(date_min)
+                except KeyError:
+                    idx_min = 0
+
+                # 2. 使用 ax.plot 手動畫線 (這一定會畫在副圖上)
+                # 格式: ax.plot([x1, x2], [y1, y2], color=...)
+                if p_max > 0:
+                    ax_pressure.plot([0, idx_max], [p_max, p_max], color='red', linestyle='--', linewidth=1.5)
+                
+                if p_min > 0:
+                    ax_pressure.plot([0, idx_min], [p_min, p_min], color='green', linestyle='--', linewidth=1.5)
+
+                # 3. Y 軸與數值標註
+                ax_pressure.set_yticks([]) # 隱藏預設刻度
+                
+                # 紅色最高值文字
                 ax_pressure.text(
                     len(df_chart) + 0.5, p_max, 
                     f'{p_max:.1f}', 
                     color='red', va='center', fontsize=10, fontweight='bold'
                 )
                 
-                # 綠色最低值
+                # 綠色最低值文字
                 ax_pressure.text(
                     len(df_chart) + 0.5, p_min, 
                     f'{p_min:.1f}', 
