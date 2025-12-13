@@ -46,7 +46,7 @@ def display_card(label, value, color="black", help_text=""):
 
 # --- 主程式 ---
 def main():
-    # 1. CSS 全局樣式
+    # CSS 全局樣式
     st.markdown("""
         <style>
             .block-container {
@@ -95,30 +95,30 @@ def main():
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
+        # ★ 關鍵修正：填補 Sell_Pressure 的空值，避免繪圖報錯
+        if 'Sell_Pressure' in df.columns:
+            df['Sell_Pressure'] = df['Sell_Pressure'].fillna(0)
+
         last_row = df.iloc[-1]
         
-        # --- ★ 核心邏輯：計算上個月的高低點 ---
-        # 1. 取得「上個月」的年份與月份
+        # --- 計算上個月的高低點 ---
         current_date = last_row['Date']
         first_day_this_month = current_date.replace(day=1)
         last_day_prev_month = first_day_this_month - timedelta(days=1)
-        
         target_year = last_day_prev_month.year
         target_month = last_day_prev_month.month
         
-        # 2. 篩選出上個月的所有資料
         mask = (df['Date'].dt.year == target_year) & (df['Date'].dt.month == target_month)
         prev_month_df = df[mask]
         
-        # 3. 找出最大值與最小值
+        # ★ 關鍵修正：強制轉為 float，避免 numpy 格式導致 TypeError
         if not prev_month_df.empty:
-            prev_month_high = prev_month_df['High'].max()
-            prev_month_low = prev_month_df['Low'].min()
+            prev_month_high = float(prev_month_df['High'].max())
+            prev_month_low = float(prev_month_df['Low'].min())
         else:
-            prev_month_high = 0
-            prev_month_low = 0
+            prev_month_high = 0.0
+            prev_month_low = 0.0
 
-        # 輔助函式
         def fmt(val):
             try:
                 return str(int(val))
@@ -127,30 +127,16 @@ def main():
 
         # --- 2. 頂部資訊看板 ---
         c1, c2, c3, c4, c5 = st.columns(5)
-        
-        with c1:
-            display_card("📅 最新日期", last_row['Date'].strftime("%Y-%m-%d"))
-        
-        with c2:
-            div_val = fmt(last_row.get('Divider', 0))
-            display_card("⚖️ 明日多空分界", div_val, color="#333", help_text="(開+低+收)/3")
+        with c1: display_card("📅 最新日期", last_row['Date'].strftime("%Y-%m-%d"))
+        with c2: display_card("⚖️ 明日多空分界", fmt(last_row.get('Divider', 0)), color="#333", help_text="(開+低+收)/3")
+        with c3: display_card("🔮 明日三關價", f"{fmt(last_row.get('Upper_Pass',0))}/{fmt(last_row.get('Mid_Pass',0))}/{fmt(last_row.get('Lower_Pass',0))}", color="#555")
+        with c4: display_card("🔴 外資多方成本", fmt(last_row.get('Long_Cost', 0)), color="#d63031")
+        with c5: display_card("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)), color="#00b894")
 
-        with c3:
-            u = fmt(last_row.get('Upper_Pass', 0))
-            m = fmt(last_row.get('Mid_Pass', 0))
-            l = fmt(last_row.get('Lower_Pass', 0))
-            display_card("🔮 明日三關價", f"{u}/{m}/{l}", color="#555")
-            
-        with c4:
-            display_card("🔴 外資多方成本", fmt(last_row.get('Long_Cost', 0)), color="#d63031")
-            
-        with c5:
-            display_card("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)), color="#00b894")
-
-        # --- 3. 繪圖 (含上月高低線) ---
+        # --- 3. 繪圖 ---
         df_chart = df.tail(60).set_index("Date")
         
-        # 準備畫線資料 (建立與圖表長度相同的 list，值都一樣)
+        # 準備畫線資料 (確保裡面都是 float)
         h_line_data = [prev_month_high] * len(df_chart)
         l_line_data = [prev_month_low] * len(df_chart)
 
@@ -159,52 +145,57 @@ def main():
         
         add_plots = []
         
-        # (1) 賣壓 (副圖)
+        # (1) 賣壓
         if 'Sell_Pressure' in df_chart.columns:
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='', alpha=0.3))
         
-        # (2) ★ 上月最高價 (Y軸 價格線) - 紫色虛線
+        # (2) 上月高點 (紫色虛線)
         if prev_month_high > 0:
             add_plots.append(mpf.make_addplot(h_line_data, color='#9b59b6', linestyle='--', width=1.5))
             
-        # (3) ★ 上月最低價 (Y軸 價格線) - 紫色虛線
+        # (3) 上月低點 (紫色虛線)
         if prev_month_low > 0:
             add_plots.append(mpf.make_addplot(l_line_data, color='#9b59b6', linestyle='--', width=1.5))
 
-        fig, axlist = mpf.plot(
-            df_chart, 
-            type='candle', 
-            style=s, 
-            title="", 
-            ylabel='', 
-            addplot=add_plots, 
-            volume=False, 
-            panel_ratios=(3, 1), 
-            returnfig=True,
-            figsize=(10, 5),
-            tight_layout=True
-        )
+        # 這裡的 try-except 是為了捕捉任何繪圖錯誤並顯示出來
+        try:
+            fig, axlist = mpf.plot(
+                df_chart, 
+                type='candle', 
+                style=s, 
+                title="", 
+                ylabel='', 
+                addplot=add_plots, 
+                volume=False, 
+                panel_ratios=(3, 1), 
+                returnfig=True,
+                figsize=(10, 5),
+                tight_layout=True
+            )
 
-        # X 軸每 5 天標記一次
-        xtick_locs = []
-        xtick_labels = []
-        for i, date_val in enumerate(df_chart.index):
-            if i % 5 == 0:
-                xtick_locs.append(i)
-                xtick_labels.append(date_val.strftime('%Y-%m-%d'))
-        
-        axlist[0].set_xticks(xtick_locs)
-        axlist[0].set_xticklabels(xtick_labels) 
-        
-        st.pyplot(fig, use_container_width=True)
-        
-        # 顯示數值備註 (方便對照圖上的線是多少錢)
-        st.markdown(f"""
-            <div style='text-align: center; color: #9b59b6; font-size: 0.9rem; margin-top: -10px;'>
-                <b>上月高點:</b> {int(prev_month_high)} &nbsp;&nbsp;|&nbsp;&nbsp; <b>上月低點:</b> {int(prev_month_low)}
-            </div>
-        """, unsafe_allow_html=True)
-        
+            # X 軸每 5 天標記
+            xtick_locs = []
+            xtick_labels = []
+            for i, date_val in enumerate(df_chart.index):
+                if i % 5 == 0:
+                    xtick_locs.append(i)
+                    xtick_labels.append(date_val.strftime('%Y-%m-%d'))
+            
+            axlist[0].set_xticks(xtick_locs)
+            axlist[0].set_xticklabels(xtick_labels) 
+            
+            st.pyplot(fig, use_container_width=True)
+            
+            # 顯示備註
+            st.markdown(f"""
+                <div style='text-align: center; color: #9b59b6; font-size: 0.9rem; margin-top: -10px;'>
+                    <b>上月高點:</b> {int(prev_month_high)} &nbsp;&nbsp;|&nbsp;&nbsp; <b>上月低點:</b> {int(prev_month_low)}
+                </div>
+            """, unsafe_allow_html=True)
+
+        except Exception as e:
+            st.error(f"繪圖發生錯誤: {e}")
+
         with st.expander("查看詳細歷史數據"):
             st.dataframe(df.sort_index(ascending=False), use_container_width=True)
             
