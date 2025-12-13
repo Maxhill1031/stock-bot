@@ -1,0 +1,30 @@
+name: Daily Stock Crawler
+
+on:
+  schedule:
+    # 設定每天 UTC 時間 07:30 (台灣時間 15:30)
+    - cron: '30 7 * * *'
+  workflow_dispatch: # 這行讓您可以手動按按鈕測試
+
+jobs:
+  run-crawler:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install pandas requests gspread oauth2client lxml html5lib
+
+    - name: Run Bot Script
+      env:
+        # 這裡會自動去讀取您在設定裡存的金鑰
+        GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+      run: python bot.py
