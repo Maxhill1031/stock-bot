@@ -120,7 +120,6 @@ def main():
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='', alpha=0.3))
 
         try:
-            # ★ 移除 mpf.plot 裡的 alines 參數 (因為它無法指定 panel)
             fig, axlist = mpf.plot(
                 df_chart, 
                 type='candle', 
@@ -145,15 +144,15 @@ def main():
             axlist[0].set_xticks(xtick_locs)
             axlist[0].set_xticklabels(xtick_labels)
 
-            # --- ★ 關鍵修正：手動在副圖畫線 ---
+            # --- ★ 副圖畫線修正：從發生日 -> 延伸到右邊 ---
             if len(axlist) > 2:
-                ax_pressure = axlist[2] # 這是副圖的 Axes
+                ax_pressure = axlist[2] # 副圖 Axes
                 
-                # 1. 找出日期對應的整數 X 座標
+                # 1. 取得 X 軸的整數座標
+                # 如果日期在畫面內，取其索引；如果比畫面還舊，就設為 0 (從最左邊開始畫)
                 try:
                     idx_max = df_chart.index.get_loc(date_max)
                 except KeyError:
-                    # 如果上個月最高點的日期已經不在這 60 天內，就畫到最左邊 (或不畫)
                     idx_max = 0 
                 
                 try:
@@ -161,27 +160,27 @@ def main():
                 except KeyError:
                     idx_min = 0
 
-                # 2. 使用 ax.plot 手動畫線 (這一定會畫在副圖上)
-                # 格式: ax.plot([x1, x2], [y1, y2], color=...)
+                # 畫面最右邊的座標 (對應到最後一根 K 棒 + 延伸區)
+                x_end = len(df_chart)
+
+                # 2. 畫線：[發生點, 最右邊]
                 if p_max > 0:
-                    ax_pressure.plot([0, idx_max], [p_max, p_max], color='red', linestyle='--', linewidth=1.5)
+                    ax_pressure.plot([idx_max, x_end], [p_max, p_max], color='red', linestyle='--', linewidth=1.5)
                 
                 if p_min > 0:
-                    ax_pressure.plot([0, idx_min], [p_min, p_min], color='green', linestyle='--', linewidth=1.5)
+                    ax_pressure.plot([idx_min, x_end], [p_min, p_min], color='green', linestyle='--', linewidth=1.5)
 
-                # 3. Y 軸與數值標註
-                ax_pressure.set_yticks([]) # 隱藏預設刻度
+                # 3. 右側標註數值
+                ax_pressure.set_yticks([]) # 隱藏原刻度
                 
-                # 紅色最高值文字
                 ax_pressure.text(
-                    len(df_chart) + 0.5, p_max, 
+                    x_end + 0.5, p_max, 
                     f'{p_max:.1f}', 
                     color='red', va='center', fontsize=10, fontweight='bold'
                 )
                 
-                # 綠色最低值文字
                 ax_pressure.text(
-                    len(df_chart) + 0.5, p_min, 
+                    x_end + 0.5, p_min, 
                     f'{p_min:.1f}', 
                     color='green', va='center', fontsize=10, fontweight='bold'
                 )
