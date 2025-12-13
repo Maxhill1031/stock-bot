@@ -46,33 +46,12 @@ def display_card(label, value, color="black", help_text=""):
 
 # --- 主程式 ---
 def main():
-    # CSS 全局樣式
     st.markdown("""
         <style>
-            .block-container {
-                padding-top: 1rem;
-                padding-bottom: 1rem;
-                padding-left: 1rem;
-                padding-right: 1rem;
-            }
-            .header-container {
-                display: flex;
-                align-items: baseline;
-                padding-bottom: 8px;
-                border-bottom: 1px solid #eee;
-                margin-bottom: 15px;
-            }
-            .main-title {
-                font-size: 1.5rem;
-                font-weight: bold;
-                color: #333;
-                margin-right: 12px;
-            }
-            .sub-title {
-                font-size: 0.8rem;
-                color: #888;
-                font-weight: normal;
-            }
+            .block-container { padding-top: 1rem; padding-bottom: 1rem; padding-left: 1rem; padding-right: 1rem; }
+            .header-container { display: flex; align-items: baseline; padding-bottom: 8px; border-bottom: 1px solid #eee; margin-bottom: 15px; }
+            .main-title { font-size: 1.5rem; font-weight: bold; color: #333; margin-right: 12px; }
+            .sub-title { font-size: 0.8rem; color: #888; font-weight: normal; }
         </style>
         <div class="header-container">
             <span class="main-title">📊 台股期貨自動分析系統</span>
@@ -90,18 +69,16 @@ def main():
         numeric_cols = ['Open', 'High', 'Low', 'Close', 
                         'Upper_Pass', 'Mid_Pass', 'Lower_Pass', 'Divider', 
                         'Long_Cost', 'Short_Cost', 'Sell_Pressure']
-        
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # ★ 關鍵修正：填補 Sell_Pressure 的空值，避免繪圖報錯
         if 'Sell_Pressure' in df.columns:
             df['Sell_Pressure'] = df['Sell_Pressure'].fillna(0)
 
         last_row = df.iloc[-1]
         
-        # --- 計算上個月的高低點 ---
+        # --- 計算上個月的「賣壓」最大與最小 ---
         current_date = last_row['Date']
         first_day_this_month = current_date.replace(day=1)
         last_day_prev_month = first_day_this_month - timedelta(days=1)
@@ -111,19 +88,17 @@ def main():
         mask = (df['Date'].dt.year == target_year) & (df['Date'].dt.month == target_month)
         prev_month_df = df[mask]
         
-        # ★ 關鍵修正：強制轉為 float，避免 numpy 格式導致 TypeError
+        # ★ 計算賣壓極值 (確保是浮點數)
         if not prev_month_df.empty:
-            prev_month_high = float(prev_month_df['High'].max())
-            prev_month_low = float(prev_month_df['Low'].min())
+            pressure_max = float(prev_month_df['Sell_Pressure'].max())
+            pressure_min = float(prev_month_df['Sell_Pressure'].min())
         else:
-            prev_month_high = 0.0
-            prev_month_low = 0.0
+            pressure_max = 0.0
+            pressure_min = 0.0
 
         def fmt(val):
-            try:
-                return str(int(val))
-            except:
-                return "0"
+            try: return str(int(val))
+            except: return "0"
 
         # --- 2. 頂部資訊看板 ---
         c1, c2, c3, c4, c5 = st.columns(5)
@@ -133,31 +108,30 @@ def main():
         with c4: display_card("🔴 外資多方成本", fmt(last_row.get('Long_Cost', 0)), color="#d63031")
         with c5: display_card("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)), color="#00b894")
 
-        # --- 3. 繪圖 ---
+        # --- 3. 繪圖 (賣壓極值版) ---
         df_chart = df.tail(60).set_index("Date")
         
-        # 準備畫線資料 (確保裡面都是 float)
-        h_line_data = [prev_month_high] * len(df_chart)
-        l_line_data = [prev_month_low] * len(df_chart)
+        # 準備畫線資料
+        p_max_line = [pressure_max] * len(df_chart)
+        p_min_line = [pressure_min] * len(df_chart)
 
         mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
         
         add_plots = []
         
-        # (1) 賣壓
+        # (1) 賣壓 Bar (Panel 1)
         if 'Sell_Pressure' in df_chart.columns:
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='', alpha=0.3))
         
-        # (2) 上月高點 (紫色虛線)
-        if prev_month_high > 0:
-            add_plots.append(mpf.make_addplot(h_line_data, color='#9b59b6', linestyle='--', width=1.5))
+        # (2) ★ 上月賣壓最大值 (紅色虛線, Panel 1)
+        if pressure_max > 0:
+            add_plots.append(mpf.make_addplot(p_max_line, panel=1, color='red', linestyle='--', width=1.2))
             
-        # (3) 上月低點 (紫色虛線)
-        if prev_month_low > 0:
-            add_plots.append(mpf.make_addplot(l_line_data, color='#9b59b6', linestyle='--', width=1.5))
+        # (3) ★ 上月賣壓最小值 (綠色虛線, Panel 1)
+        if pressure_min > 0: # 賣壓可能為0或負嗎? 假設大於0才畫，或只要有值就畫
+            add_plots.append(mpf.make_addplot(p_min_line, panel=1, color='green', linestyle='--', width=1.2))
 
-        # 這裡的 try-except 是為了捕捉任何繪圖錯誤並顯示出來
         try:
             fig, axlist = mpf.plot(
                 df_chart, 
@@ -180,21 +154,39 @@ def main():
                 if i % 5 == 0:
                     xtick_locs.append(i)
                     xtick_labels.append(date_val.strftime('%Y-%m-%d'))
-            
             axlist[0].set_xticks(xtick_locs)
-            axlist[0].set_xticklabels(xtick_labels) 
+            axlist[0].set_xticklabels(xtick_labels)
             
+            # ★ 關鍵：在 Panel 1 (副圖) 的 Y 軸上標註數值
+            # axlist[0] 是主圖, axlist[2] 通常是 Panel 1 (因為 mpf 內部結構關係)
+            # 我們嘗試找出 panel 1 的軸
+            if len(axlist) > 2:
+                ax_pressure = axlist[2] 
+                
+                # 標註最大值 (紅色)
+                ax_pressure.text(
+                    len(df_chart)+0.5, pressure_max, 
+                    f'{pressure_max:.1f}', 
+                    color='red', 
+                    verticalalignment='center', 
+                    fontsize=9, 
+                    fontweight='bold'
+                )
+                
+                # 標註最小值 (綠色)
+                ax_pressure.text(
+                    len(df_chart)+0.5, pressure_min, 
+                    f'{pressure_min:.1f}', 
+                    color='green', 
+                    verticalalignment='center', 
+                    fontsize=9, 
+                    fontweight='bold'
+                )
+
             st.pyplot(fig, use_container_width=True)
             
-            # 顯示備註
-            st.markdown(f"""
-                <div style='text-align: center; color: #9b59b6; font-size: 0.9rem; margin-top: -10px;'>
-                    <b>上月高點:</b> {int(prev_month_high)} &nbsp;&nbsp;|&nbsp;&nbsp; <b>上月低點:</b> {int(prev_month_low)}
-                </div>
-            """, unsafe_allow_html=True)
-
         except Exception as e:
-            st.error(f"繪圖發生錯誤: {e}")
+            st.error(f"繪圖錯誤: {e}")
 
         with st.expander("查看詳細歷史數據"):
             st.dataframe(df.sort_index(ascending=False), use_container_width=True)
