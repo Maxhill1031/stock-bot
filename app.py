@@ -43,7 +43,7 @@ def display_card(label, value, color="black", help_text=""):
             text-align: center;
             box-shadow: 0 1px 2px rgba(0,0,0,0.05);
             " {tooltip_html}>
-            <div style="font-size: 0.85rem; color: #666; margin-bottom: 4px;">{label}</div>
+            <div style="font-size: 0.85rem; color: #666; margin-bottom: 2px;">{label}</div>
             <div style="font-size: 1.8rem; font-weight: bold; color: {color};">{value}</div>
         </div>
     """, unsafe_allow_html=True)
