@@ -28,10 +28,55 @@ def get_data():
         st.error(f"資料庫連線失敗: {e}")
         return pd.DataFrame()
 
+# --- 自定義的小型數據卡片 (HTML) ---
+def display_card(label, value, color="black", help_text=""):
+    """
+    用 HTML 渲染一個比 st.metric 更小的數據卡片
+    """
+    tooltip_html = f'title="{help_text}"' if help_text else ''
+    st.markdown(f"""
+        <div style="
+            background-color: white;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #e0e0e0;
+            text-align: center;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            " {tooltip_html}>
+            <div style="font-size: 0.85rem; color: #666; margin-bottom: 4px;">{label}</div>
+            <div style="font-size: 1.1rem; font-weight: bold; color: {color};">{value}</div>
+        </div>
+    """, unsafe_allow_html=True)
+
 # --- 主程式 ---
 def main():
-    st.title("📊 台股期貨自動分析系統")
-    st.markdown("數據來源：期交所/證交所 | 自動更新")
+    # 1. 客製化標題區 (標題變小 + 副標題移到後面)
+    st.markdown("""
+        <style>
+            .header-container {
+                display: flex;
+                align-items: baseline; /* 讓文字底部對齊 */
+                padding-bottom: 10px;
+                border-bottom: 1px solid #eee;
+                margin-bottom: 20px;
+            }
+            .main-title {
+                font-size: 1.8rem; /* 比原本 st.title 小 */
+                font-weight: bold;
+                color: #333;
+                margin-right: 15px;
+            }
+            .sub-title {
+                font-size: 0.9rem;
+                color: #888;
+                font-weight: normal;
+            }
+        </style>
+        <div class="header-container">
+            <span class="main-title">📊 台股期貨自動分析系統</span>
+            <span class="sub-title">數據來源：期交所/證交所 | 自動更新</span>
+        </div>
+    """, unsafe_allow_html=True)
 
     df = get_data()
     
@@ -57,30 +102,31 @@ def main():
             except:
                 return "0"
 
-        # --- 2. 頂部資訊看板 (Metrics) ---
+        # --- 2. 頂部資訊看板 (使用自定義卡片) ---
         
         c1, c2, c3, c4, c5 = st.columns(5)
         
         with c1:
-            st.metric("📅 最新日期", last_row['Date'].strftime("%Y-%m-%d"))
+            display_card("📅 最新日期", last_row['Date'].strftime("%Y-%m-%d"))
         
         with c2:
             div_val = fmt(last_row.get('Divider', 0))
-            st.metric("⚖️ 明日多空分界", div_val, help="(開+低+收)/3")
+            display_card("⚖️ 明日多空分界", div_val, color="#333", help_text="(開+低+收)/3")
 
         with c3:
             u = fmt(last_row.get('Upper_Pass', 0))
             m = fmt(last_row.get('Mid_Pass', 0))
             l = fmt(last_row.get('Lower_Pass', 0))
-            st.metric("🔮 明日三關價 (上/中/下)", f"{u} / {m} / {l}")
+            # 字體太長時，HTML 會自動換行或縮小，比 st.metric 更有彈性
+            display_card("🔮 明日三關價", f"{u}/{m}/{l}", color="#555")
             
         with c4:
-            st.metric("🔴 外資多方成本", fmt(last_row.get('Long_Cost', 0)))
+            display_card("🔴 外資多方成本", fmt(last_row.get('Long_Cost', 0)), color="#d63031")
             
         with c5:
-            st.metric("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)))
+            display_card("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)), color="#00b894")
 
-        # --- 3. 繪圖 (無標籤極簡版) ---
+        # --- 3. 繪圖 (極簡乾淨版) ---
         
         df_chart = df.tail(60).set_index("Date")
         
@@ -90,15 +136,17 @@ def main():
         
         add_plots = []
         if 'Sell_Pressure' in df_chart.columns:
-            # ★ 修改處 1: ylabel='' (移除 Pressure 文字)
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='', alpha=0.3))
         
+        # 這裡加入一個間距，讓圖表跟上面的卡片分開一點點
+        st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
+
         fig, ax = mpf.plot(
             df_chart, 
             type='candle', 
             style=s, 
             title="", 
-            ylabel='',   # ★ 修改處 2: 這裡設為空字串 (移除 Price 文字)
+            ylabel='', 
             addplot=add_plots, 
             volume=False, 
             panel_ratios=(3, 1), 
