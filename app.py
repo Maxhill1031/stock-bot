@@ -80,8 +80,7 @@ def main():
         with c5:
             st.metric("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)))
 
-        # --- 3. 繪圖 (無標題緊湊版) ---
-        # ★ 已刪除 st.subheader(...)，這樣圖表就會直接往上貼
+        # --- 3. 繪圖 (無標籤極簡版) ---
         
         df_chart = df.tail(60).set_index("Date")
         
@@ -91,20 +90,21 @@ def main():
         
         add_plots = []
         if 'Sell_Pressure' in df_chart.columns:
-            add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='Pressure', alpha=0.3))
+            # ★ 修改處 1: ylabel='' (移除 Pressure 文字)
+            add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='', alpha=0.3))
         
         fig, ax = mpf.plot(
             df_chart, 
             type='candle', 
             style=s, 
-            title=f"Taifex Futures Daily K-Line", # 保留圖內小標題，若完全不想看到可改成 title=""
-            ylabel='Price',
+            title="", 
+            ylabel='',   # ★ 修改處 2: 這裡設為空字串 (移除 Price 文字)
             addplot=add_plots, 
             volume=False, 
             panel_ratios=(3, 1), 
             returnfig=True, 
             figsize=(10, 5),
-            tight_layout=True # ★ 加入這個參數，讓圖表邊距更少，看起來更緊湊
+            tight_layout=True
         )
         
         st.pyplot(fig, use_container_width=True)
