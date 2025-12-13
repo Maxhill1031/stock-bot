@@ -3,6 +3,7 @@ import pandas as pd
 import mplfinance as mpf
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from datetime import timedelta
 
 # --- 設定 ---
 SHEET_NAME = "Daily_Stock_Data"
@@ -17,18 +18,16 @@ def get_data():
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             client = gspread.authorize(creds)
             sheet = client.open(SHEET_NAME).sheet1
-            
-            # 讀取全部資料
             data = sheet.get_all_records()
             return pd.DataFrame(data)
         else:
-            st.error("找不到 Secrets 設定，請檢查 Streamlit 後台。")
+            st.error("找不到 Secrets 設定")
             return pd.DataFrame()
     except Exception as e:
         st.error(f"資料庫連線失敗: {e}")
         return pd.DataFrame()
 
-# --- 自定義數據卡片 (HTML) ---
+# --- 自定義數據卡片 ---
 def display_card(label, value, color="black", help_text=""):
     tooltip_html = f'title="{help_text}"' if help_text else ''
     st.markdown(f"""
@@ -47,7 +46,7 @@ def display_card(label, value, color="black", help_text=""):
 
 # --- 主程式 ---
 def main():
-    # 1. CSS 全局樣式調整
+    # 1. CSS 全局樣式
     st.markdown("""
         <style>
             .block-container {
@@ -75,7 +74,6 @@ def main():
                 font-weight: normal;
             }
         </style>
-        
         <div class="header-container">
             <span class="main-title">📊 台股期貨自動分析系統</span>
             <span class="sub-title">數據來源：期交所/證交所 | 自動更新</span>
@@ -99,6 +97,28 @@ def main():
 
         last_row = df.iloc[-1]
         
+        # --- ★ 核心邏輯：計算上個月的高低點 ---
+        # 1. 取得「上個月」的年份與月份
+        current_date = last_row['Date']
+        first_day_this_month = current_date.replace(day=1)
+        last_day_prev_month = first_day_this_month - timedelta(days=1)
+        
+        target_year = last_day_prev_month.year
+        target_month = last_day_prev_month.month
+        
+        # 2. 篩選出上個月的所有資料
+        mask = (df['Date'].dt.year == target_year) & (df['Date'].dt.month == target_month)
+        prev_month_df = df[mask]
+        
+        # 3. 找出最大值與最小值
+        if not prev_month_df.empty:
+            prev_month_high = prev_month_df['High'].max()
+            prev_month_low = prev_month_df['Low'].min()
+        else:
+            prev_month_high = 0
+            prev_month_low = 0
+
+        # 輔助函式
         def fmt(val):
             try:
                 return str(int(val))
@@ -127,16 +147,30 @@ def main():
         with c5:
             display_card("🟢 外資空方成本", fmt(last_row.get('Short_Cost', 0)), color="#00b894")
 
-        # --- 3. 繪圖 (X軸 5天標記版) ---
+        # --- 3. 繪圖 (含上月高低線) ---
         df_chart = df.tail(60).set_index("Date")
         
+        # 準備畫線資料 (建立與圖表長度相同的 list，值都一樣)
+        h_line_data = [prev_month_high] * len(df_chart)
+        l_line_data = [prev_month_low] * len(df_chart)
+
         mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
         
         add_plots = []
+        
+        # (1) 賣壓 (副圖)
         if 'Sell_Pressure' in df_chart.columns:
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='', alpha=0.3))
         
+        # (2) ★ 上月最高價 (Y軸 價格線) - 紫色虛線
+        if prev_month_high > 0:
+            add_plots.append(mpf.make_addplot(h_line_data, color='#9b59b6', linestyle='--', width=1.5))
+            
+        # (3) ★ 上月最低價 (Y軸 價格線) - 紫色虛線
+        if prev_month_low > 0:
+            add_plots.append(mpf.make_addplot(l_line_data, color='#9b59b6', linestyle='--', width=1.5))
+
         fig, axlist = mpf.plot(
             df_chart, 
             type='candle', 
@@ -151,12 +185,10 @@ def main():
             tight_layout=True
         )
 
-        # ★ 關鍵修改：手動設定 X 軸刻度 (每 5 天標記一次)
+        # X 軸每 5 天標記一次
         xtick_locs = []
         xtick_labels = []
-
         for i, date_val in enumerate(df_chart.index):
-            # i % 5 == 0 代表索引是 0, 5, 10, 15... 時才標記
             if i % 5 == 0:
                 xtick_locs.append(i)
                 xtick_labels.append(date_val.strftime('%Y-%m-%d'))
@@ -166,7 +198,13 @@ def main():
         
         st.pyplot(fig, use_container_width=True)
         
-        # --- 4. 數據表格 ---
+        # 顯示數值備註 (方便對照圖上的線是多少錢)
+        st.markdown(f"""
+            <div style='text-align: center; color: #9b59b6; font-size: 0.9rem; margin-top: -10px;'>
+                <b>上月高點:</b> {int(prev_month_high)} &nbsp;&nbsp;|&nbsp;&nbsp; <b>上月低點:</b> {int(prev_month_low)}
+            </div>
+        """, unsafe_allow_html=True)
+        
         with st.expander("查看詳細歷史數據"):
             st.dataframe(df.sort_index(ascending=False), use_container_width=True)
             
