@@ -4,23 +4,14 @@ import mplfinance as mpf
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import timedelta, datetime
-import requests
-
-# --- ★ 防崩潰引入機制 ★ ---
-# 這樣寫可以確保：就算你忘記改 requirements.txt，程式也不會直接掛掉
-# 每日盤後分析依然能正常顯示
-try:
-    import yfinance as yf
-    import pytz
-    HAS_YFINANCE = True
-except ImportError:
-    HAS_YFINANCE = False
+import yfinance as yf # ★ 必須在 requirements.txt 加入 yfinance
+import pytz
 
 # --- 設定 ---
 SHEET_NAME = "Daily_Stock_Data"
 st.set_page_config(page_title="台股期貨AI儀表板", layout="wide")
 
-# --- 連接 Google Sheet (完全不動) ---
+# --- 連接 Google Sheet (讀取日資料) ---
 def get_data():
     try:
         if "gcp_service_account" in st.secrets:
@@ -38,32 +29,31 @@ def get_data():
         st.error(f"資料庫連線失敗: {e}")
         return pd.DataFrame()
 
-# --- ★ 修改：Yahoo Finance 抓取函式 (含防呆) ---
+# --- ★ 修改：改用 Yahoo Finance 抓取即時分K數據 ---
 def fetch_realtime_data():
-    if not HAS_YFINANCE:
-        st.error("⚠️ 系統偵測到未安裝 `yfinance` 套件。請在 `requirements.txt` 中加入 `yfinance` 才能抓取即時資料。")
-        return None
-
     try:
+        # TX=F 是 Yahoo Finance 的台指期代號
+        # interval="1m" 代表抓取 1 分鐘線
         ticker = yf.Ticker("TX=F")
         df = ticker.history(period="1d", interval="1m")
         
         if df.empty:
             return None
         
-        # 處理時區
+        # 處理時區問題 (轉為台灣時間)
         if df.index.tzinfo is None:
              df.index = df.index.tz_localize('UTC').tz_convert('Asia/Taipei')
         else:
              df.index = df.index.tz_convert('Asia/Taipei')
         
+        # 重新命名欄位以符合 mplfinance 要求
         df = df.rename(columns={'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'})
         return df
     except Exception as e:
         st.error(f"Yahoo Finance 連線錯誤: {e}")
         return None
 
-# --- 自定義數據卡片 (完全不動) ---
+# --- 自定義數據卡片 ---
 def display_card(label, value, color="black", help_text=""):
     tooltip_html = f'title="{help_text}"' if help_text else ''
     st.markdown(f"""
@@ -82,12 +72,14 @@ def display_card(label, value, color="black", help_text=""):
 
 # --- 主程式 ---
 def main():
+    # CSS 全局樣式
     st.markdown("""
         <style>
             .block-container { padding-top: 1rem; padding-bottom: 1rem; padding-left: 1rem; padding-right: 1rem; }
             .header-container { display: flex; align-items: baseline; padding-bottom: 8px; border-bottom: 1px solid #eee; margin-bottom: 15px; }
             .main-title { font-size: 1.5rem; font-weight: bold; color: #333; margin-right: 12px; }
             .sub-title { font-size: 0.8rem; color: #888; font-weight: normal; }
+            /* 調整 Tab 字體 */
             button[data-baseweb="tab"] > div { font-size: 1.1rem; font-weight: bold; }
         </style>
         <div class="header-container">
@@ -100,13 +92,15 @@ def main():
     df = get_data()
     
     if not df.empty:
-        # 資料清洗 (防止 TypeError)
-        df.columns = df.columns.str.strip() 
+        # --- ★ 資料清洗 (必要) ---
+        # 這裡必須把 Google Sheet 的 "28,250" 這種逗號拿掉，不然會報錯
+        df.columns = df.columns.str.strip()
         numeric_cols = ['Open', 'High', 'Low', 'Close', 'Upper_Pass', 'Mid_Pass', 'Lower_Pass', 'Divider', 'Long_Cost', 'Short_Cost', 'Sell_Pressure']
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace(',', '').replace('nan', '')
                 df[col] = pd.to_numeric(df[col], errors='coerce')
+        # ------------------------
 
         df['Date'] = pd.to_datetime(df['Date'])
         df = df.sort_values(by="Date")
@@ -124,11 +118,13 @@ def main():
             try: return str(int(val))
             except: return "0"
 
-        # 建立頁籤
+        # =========================================================
+        # ★ 建立頁籤 (Tabs)
+        # =========================================================
         tab1, tab2 = st.tabs(["📅 每日盤後分析", "⚡ 即時行情走勢"])
 
         # ---------------------------------------------------------
-        # Tab 1: 每日盤後分析 (完全不動)
+        # Tab 1: 每日盤後分析 (保留原貌)
         # ---------------------------------------------------------
         with tab1:
             c1, c2, c3, c4, c5 = st.columns(5)
@@ -214,22 +210,20 @@ def main():
                 if 'realtime_df' not in st.session_state:
                     st.session_state['realtime_df'] = None
 
+                # ★ 改用 Yahoo 抓取函式
                 if st.button("🔄 截取最新行情", type="primary"):
-                    # 檢查是否有安裝 yfinance
-                    if not HAS_YFINANCE:
-                        st.error("❌ 錯誤：找不到 yfinance 套件。請確認 requirements.txt 已更新。")
-                    else:
-                        with st.spinner("連線 Yahoo Finance 中..."):
-                            df_rt = fetch_realtime_data()
-                            if df_rt is not None and not df_rt.empty:
-                                st.session_state['realtime_df'] = df_rt
-                                st.success(f"已更新")
-                            else:
-                                st.warning("無法取得資料")
+                    with st.spinner("連線 Yahoo Finance 中..."):
+                        df_rt = fetch_realtime_data()
+                        if df_rt is not None and not df_rt.empty:
+                            st.session_state['realtime_df'] = df_rt
+                            st.success(f"已更新")
+                        else:
+                            st.warning("Yahoo Finance 無資料 (可能休市)")
 
             if st.session_state['realtime_df'] is not None:
                 df_chart_rt = st.session_state['realtime_df']
                 
+                # 準備畫線 (多空分界/成本)
                 line_div = [ref_divider] * len(df_chart_rt)
                 line_long = [ref_long] * len(df_chart_rt)
                 line_short = [ref_short] * len(df_chart_rt)
@@ -255,6 +249,7 @@ def main():
                     ax_rt = axlist_rt[0]
                     x_pos = len(df_chart_rt) + 1
                     
+                    # 標註數值
                     if ref_divider > 0:
                         ax_rt.text(x_pos, ref_divider, f'分界 {int(ref_divider)}', color='black', va='center', fontweight='bold')
                     if ref_long > 0:
@@ -262,6 +257,7 @@ def main():
                     if ref_short > 0:
                         ax_rt.text(x_pos, ref_short, f'空本 {int(ref_short)}', color='green', va='center', fontweight='bold')
                     
+                    # 標註最新價 (藍色)
                     current_price = df_chart_rt['Close'].iloc[-1]
                     ax_rt.text(x_pos, current_price, f'◀ {int(current_price)}', color='blue', va='center', fontweight='bold')
 
@@ -273,10 +269,7 @@ def main():
                 except Exception as e:
                     st.error(f"即時圖繪製錯誤: {e}")
             else:
-                if HAS_YFINANCE:
-                    st.info("👈 請點擊左側按鈕載入即時行情")
-                else:
-                    st.warning("⚠️ 請先安裝 yfinance 套件才能使用此功能。")
+                st.info("👈 請點擊左側按鈕載入即時行情")
 
     else:
         st.warning("⚠️ 資料庫為空")
