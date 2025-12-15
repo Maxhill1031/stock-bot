@@ -4,4 +4,6 @@ requests
 mplfinance
 gspread
 oauth2client
+
 lxml
+yfinance
