@@ -4,10 +4,10 @@ import mplfinance as mpf
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import timedelta, datetime
-import requests  # 用來做偽裝請求
-import pytz
+import requests
 
-# --- ★ 防崩潰機制：嘗試匯入 yfinance ★ ---
+# --- ★ 防崩潰機制 ★ ---
+# 嘗試匯入 yfinance，如果沒安裝也不會讓整頁當掉
 try:
     import yfinance as yf
     HAS_YFINANCE = True
@@ -36,36 +36,33 @@ def get_data():
         st.error(f"資料庫連線失敗: {e}")
         return pd.DataFrame()
 
-# --- ★ 修改重點：Yahoo Finance 抓取函式 (加入偽裝 Headers 防止 Rate Limit) ---
+# --- ★ 修改：Yahoo Finance 抓取函式 (移除衝突的 Session 設定) ---
 def fetch_realtime_data():
+    # 1. 檢查是否有安裝 yfinance
     if not HAS_YFINANCE:
-        st.error("⚠️ 系統偵測到未安裝 `yfinance`。請務必在 `requirements.txt` 中加入 `yfinance`。")
+        st.error("⚠️ 錯誤：未安裝 `yfinance`。請檢查 requirements.txt 是否已加入 `yfinance`。")
         return None
 
     try:
-        # 1. 建立 Session 並設定 User-Agent (偽裝成 Chrome 瀏覽器)
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        })
-
-        # 2. 將 session 傳遞給 yf.Ticker
-        ticker = yf.Ticker("TX=F", session=session)
+        # 2. 直接呼叫，不手動塞 Session (讓 yfinance 自動使用 curl_cffi)
+        ticker = yf.Ticker("TX=F")
         df = ticker.history(period="1d", interval="1m")
         
         if df.empty:
             return None
         
-        # 3. 處理時區
+        # 3. 處理時區 (轉為台灣時間)
         if df.index.tzinfo is None:
              df.index = df.index.tz_localize('UTC').tz_convert('Asia/Taipei')
         else:
              df.index = df.index.tz_convert('Asia/Taipei')
         
-        # 4. 重新命名欄位
+        # 4. 欄位更名
         df = df.rename(columns={'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'})
         return df
+
     except Exception as e:
+        # 顯示錯誤但不崩潰
         st.error(f"Yahoo Finance 連線錯誤: {e}")
         return None
 
@@ -107,7 +104,7 @@ def main():
     df = get_data()
     
     if not df.empty:
-        # --- 資料清洗 (防止逗號錯誤) ---
+        # --- 資料清洗 (防止逗號導致的 TypeError) ---
         df.columns = df.columns.str.strip() 
         numeric_cols = ['Open', 'High', 'Low', 'Close', 'Upper_Pass', 'Mid_Pass', 'Lower_Pass', 'Divider', 'Long_Cost', 'Short_Cost', 'Sell_Pressure']
         for col in numeric_cols:
@@ -222,14 +219,16 @@ def main():
                     st.session_state['realtime_df'] = None
 
                 if st.button("🔄 截取最新行情", type="primary"):
-                    with st.spinner("連線 Yahoo Finance 中..."):
-                        # ★ 呼叫有加偽裝的函式
-                        df_rt = fetch_realtime_data()
-                        if df_rt is not None and not df_rt.empty:
-                            st.session_state['realtime_df'] = df_rt
-                            st.success(f"已更新")
-                        else:
-                            st.warning("Yahoo Finance 無資料 (可能休市或連線被阻擋)")
+                    if not HAS_YFINANCE:
+                        st.error("❌ 尚未安裝 yfinance，無法抓取資料。")
+                    else:
+                        with st.spinner("連線 Yahoo Finance 中..."):
+                            df_rt = fetch_realtime_data()
+                            if df_rt is not None and not df_rt.empty:
+                                st.session_state['realtime_df'] = df_rt
+                                st.success(f"已更新")
+                            else:
+                                st.warning("無法取得資料 (可能休市或連線被阻擋)")
 
             if st.session_state['realtime_df'] is not None:
                 df_chart_rt = st.session_state['realtime_df']
@@ -280,7 +279,7 @@ def main():
                 if HAS_YFINANCE:
                     st.info("👈 請點擊左側按鈕載入即時行情")
                 else:
-                    st.warning("⚠️ 請先在 requirements.txt 安裝 yfinance 套件才能使用此功能。")
+                    st.warning("⚠️ 請先在 requirements.txt 安裝 yfinance 與 curl_cffi 套件。")
 
     else:
         st.warning("⚠️ 資料庫為空")
