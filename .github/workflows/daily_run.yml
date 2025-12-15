@@ -3,7 +3,7 @@ name: Daily Stock Crawler
 on:
   schedule:
     # 設定每天 UTC 時間 07:00 (台灣時間 15:00)
-    - cron: '30 7 * * *'
+    - cron: '00 7 * * *'
   workflow_dispatch: # 這行讓您可以手動按按鈕測試
 
 jobs:
