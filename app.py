@@ -5,14 +5,23 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import timedelta, datetime
 import requests
-import yfinance as yf
-import pytz
+import json
+import random
+import time
+
+# --- ★ 防崩潰機制 ★ ---
+try:
+    import yfinance as yf
+    # 這裡可以加入 curl_cffi 的檢查，但為求簡單先依賴 requests
+    HAS_YFINANCE = True
+except ImportError:
+    HAS_YFINANCE = False
 
 # --- 設定 ---
 SHEET_NAME = "Daily_Stock_Data"
 st.set_page_config(page_title="台股期貨AI儀表板", layout="wide")
 
-# --- 連接 Google Sheet (讀取日資料 - 完全不動) ---
+# --- 連接 Google Sheet ---
 def get_data():
     try:
         if "gcp_service_account" in st.secrets:
@@ -30,31 +39,59 @@ def get_data():
         st.error(f"資料庫連線失敗: {e}")
         return pd.DataFrame()
 
-# --- ★ 修改：Yahoo Finance 抓取函式 (移除衝突的 Session 設定) ---
-def fetch_realtime_data():
+# --- 方案 A: Yahoo Finance 抓取分 K (畫圖用) ---
+def fetch_yahoo_kline():
+    if not HAS_YFINANCE:
+        return None, "未安裝 yfinance"
     try:
-        # 直接呼叫，不手動塞 Session，解決 curl_cffi 錯誤
+        # 移除 session，讓 yfinance 自動處理
         ticker = yf.Ticker("TX=F")
         df = ticker.history(period="1d", interval="1m")
         
         if df.empty:
-            return None
+            return None, "Yahoo 回傳空資料"
         
-        # 處理時區 (轉為台灣時間)
+        # 時區處理
         if df.index.tzinfo is None:
              df.index = df.index.tz_localize('UTC').tz_convert('Asia/Taipei')
         else:
              df.index = df.index.tz_convert('Asia/Taipei')
         
-        # 欄位更名
         df = df.rename(columns={'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'})
-        return df
-
+        return df, None
     except Exception as e:
-        st.error(f"Yahoo Finance 連線錯誤: {e}")
-        return None
+        return None, str(e)
 
-# --- 自定義數據卡片 (完全不動) ---
+# --- 方案 B: 期交所 MIS 抓取最新報價 (備用，僅數字) ---
+def fetch_taifex_quote():
+    try:
+        url = "https://mis.taifex.com.tw/futures/api/getQuoteList"
+        payload = {
+            "MarketType": "0",
+            "SymbolType": "F",
+            "SymbolCode": "TX", # 台指期
+            "Time": str(int(time.time() * 1000))
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        # 期交所 MIS 需要 POST 請求
+        res = requests.post(url, json=payload, headers=headers, timeout=5)
+        data = res.json()
+        
+        if data['RtCode'] == '0':
+            quote = data['QuoteList'][0]
+            price = quote.get('CL', 0) # 成交價
+            if float(price) > 0:
+                ts = quote.get('CT', '00:00:00') # 時間
+                return float(price), ts
+        return None, None
+    except Exception as e:
+        return None, None
+
+# --- 自定義數據卡片 ---
 def display_card(label, value, color="black", help_text=""):
     tooltip_html = f'title="{help_text}"' if help_text else ''
     st.markdown(f"""
@@ -73,7 +110,6 @@ def display_card(label, value, color="black", help_text=""):
 
 # --- 主程式 ---
 def main():
-    # CSS 全局樣式
     st.markdown("""
         <style>
             .block-container { padding-top: 1rem; padding-bottom: 1rem; padding-left: 1rem; padding-right: 1rem; }
@@ -88,7 +124,6 @@ def main():
         </div>
     """, unsafe_allow_html=True)
 
-    # 1. 先讀取日資料
     df = get_data()
     
     if not df.empty:
@@ -116,11 +151,10 @@ def main():
             try: return str(int(val))
             except: return "0"
 
-        # 建立頁籤
         tab1, tab2 = st.tabs(["📅 每日盤後分析", "⚡ 即時行情走勢"])
 
         # ---------------------------------------------------------
-        # Tab 1: 每日盤後分析 (完全不動)
+        # Tab 1: 每日盤後分析
         # ---------------------------------------------------------
         with tab1:
             c1, c2, c3, c4, c5 = st.columns(5)
@@ -196,26 +230,40 @@ def main():
                 st.dataframe(df.sort_index(ascending=False), use_container_width=True)
 
         # ---------------------------------------------------------
-        # Tab 2: 即時行情走勢 (Yahoo Finance)
+        # Tab 2: 即時行情走勢 (雙保險版)
         # ---------------------------------------------------------
         with tab2:
-            st.subheader("📈 台指期即時走勢 (Yahoo Finance)")
+            st.subheader("📈 台指期即時走勢")
             
             col_btn, col_info = st.columns([1, 5])
             with col_btn:
+                # 初始化 session state
                 if 'realtime_df' not in st.session_state:
                     st.session_state['realtime_df'] = None
+                if 'backup_price' not in st.session_state:
+                    st.session_state['backup_price'] = None
 
                 if st.button("🔄 截取最新行情", type="primary"):
-                    with st.spinner("連線 Yahoo Finance 中..."):
-                        # ★ 呼叫沒有 session 的函式
-                        df_rt = fetch_realtime_data()
-                        if df_rt is not None and not df_rt.empty:
+                    with st.spinner("嘗試連線 Yahoo Finance..."):
+                        # 1. 嘗試抓 Yahoo 分 K
+                        df_rt, err = fetch_yahoo_kline()
+                        
+                        if df_rt is not None:
                             st.session_state['realtime_df'] = df_rt
-                            st.success(f"已更新")
+                            st.session_state['backup_price'] = None # 清空備用
+                            st.success("Yahoo 資料更新成功")
                         else:
-                            st.warning("無法取得資料 (可能休市)")
+                            # 2. Yahoo 失敗，改抓期交所 MIS
+                            st.warning(f"Yahoo 連線失敗 ({err})，切換至備援：期交所 MIS...")
+                            price, ts = fetch_taifex_quote()
+                            if price:
+                                st.session_state['backup_price'] = (price, ts)
+                                st.session_state['realtime_df'] = None
+                                st.success("期交所 MIS 報價更新成功")
+                            else:
+                                st.error("❌ 所有來源皆無法連線，請稍後再試。")
 
+            # A. 顯示 Yahoo 圖表
             if st.session_state['realtime_df'] is not None:
                 df_chart_rt = st.session_state['realtime_df']
                 
@@ -257,10 +305,24 @@ def main():
                     st.pyplot(fig_rt, use_container_width=True)
                     with col_info:
                         last_time = df_chart_rt.index[-1].strftime('%H:%M')
-                        st.info(f"最新資料時間: {last_time} (含盤後/夜盤)")
+                        st.info(f"Yahoo 資料時間: {last_time}")
 
                 except Exception as e:
                     st.error(f"即時圖繪製錯誤: {e}")
+            
+            # B. 顯示期交所備援數據 (純文字)
+            elif st.session_state['backup_price'] is not None:
+                price, ts = st.session_state['backup_price']
+                st.metric(label="📊 台指期最新成交 (期交所 MIS)", value=int(price))
+                st.caption(f"資料時間: {ts} (Yahoo 無法連線，僅顯示最新報價)")
+                
+                # 簡單顯示多空判斷
+                if ref_divider > 0:
+                    diff = price - ref_divider
+                    status = "偏多" if diff > 0 else "偏空"
+                    color = "red" if diff > 0 else "green"
+                    st.markdown(f"**多空分界 ({int(ref_divider)}) 判斷：** <span style='color:{color};font-weight:bold'>{status} {int(abs(diff))} 點</span>", unsafe_allow_html=True)
+
             else:
                 st.info("👈 請點擊左側按鈕載入即時行情")
 
