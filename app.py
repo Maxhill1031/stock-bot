@@ -4,12 +4,12 @@ import mplfinance as mpf
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import timedelta, datetime
-import requests
+import requests  # 用來做偽裝請求
+import pytz
 
 # --- ★ 防崩潰機制：嘗試匯入 yfinance ★ ---
 try:
     import yfinance as yf
-    import pytz
     HAS_YFINANCE = True
 except ImportError:
     HAS_YFINANCE = False
@@ -18,7 +18,7 @@ except ImportError:
 SHEET_NAME = "Daily_Stock_Data"
 st.set_page_config(page_title="台股期貨AI儀表板", layout="wide")
 
-# --- 連接 Google Sheet (讀取日資料) ---
+# --- 連接 Google Sheet (讀取日資料 - 完全不動) ---
 def get_data():
     try:
         if "gcp_service_account" in st.secrets:
@@ -36,35 +36,40 @@ def get_data():
         st.error(f"資料庫連線失敗: {e}")
         return pd.DataFrame()
 
-# --- ★ 修改：改用 Yahoo Finance 抓取即時分K數據 (給 Tab 2 用) ---
+# --- ★ 修改重點：Yahoo Finance 抓取函式 (加入偽裝 Headers 防止 Rate Limit) ---
 def fetch_realtime_data():
-    # 防呆：如果沒安裝套件，直接回傳空值，不要讓程式崩潰
     if not HAS_YFINANCE:
         st.error("⚠️ 系統偵測到未安裝 `yfinance`。請務必在 `requirements.txt` 中加入 `yfinance`。")
         return None
 
     try:
-        # TX=F 是 Yahoo Finance 的台指期代號 (對應網頁版的 WTX&)
-        ticker = yf.Ticker("TX=F")
+        # 1. 建立 Session 並設定 User-Agent (偽裝成 Chrome 瀏覽器)
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        })
+
+        # 2. 將 session 傳遞給 yf.Ticker
+        ticker = yf.Ticker("TX=F", session=session)
         df = ticker.history(period="1d", interval="1m")
         
         if df.empty:
             return None
         
-        # 處理時區問題
+        # 3. 處理時區
         if df.index.tzinfo is None:
              df.index = df.index.tz_localize('UTC').tz_convert('Asia/Taipei')
         else:
              df.index = df.index.tz_convert('Asia/Taipei')
         
-        # 重新命名欄位
+        # 4. 重新命名欄位
         df = df.rename(columns={'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'})
         return df
     except Exception as e:
         st.error(f"Yahoo Finance 連線錯誤: {e}")
         return None
 
-# --- 自定義數據卡片 ---
+# --- 自定義數據卡片 (完全不動) ---
 def display_card(label, value, color="black", help_text=""):
     tooltip_html = f'title="{help_text}"' if help_text else ''
     st.markdown(f"""
@@ -102,8 +107,8 @@ def main():
     df = get_data()
     
     if not df.empty:
-        # 資料清洗 (防止 Google Sheet 逗號問題)
-        df.columns = df.columns.str.strip()
+        # --- 資料清洗 (防止逗號錯誤) ---
+        df.columns = df.columns.str.strip() 
         numeric_cols = ['Open', 'High', 'Low', 'Close', 'Upper_Pass', 'Mid_Pass', 'Lower_Pass', 'Divider', 'Long_Cost', 'Short_Cost', 'Sell_Pressure']
         for col in numeric_cols:
             if col in df.columns:
@@ -190,9 +195,9 @@ def main():
                     x_end = len(df_chart)
 
                     if p_max > 0:
-                        ax_pressure.plot([idx_max, x_end], [p_max, p_max], color='red', linestyle='--', linewidth=1.5)
+                        ax_pressure.plot([idx_max, x_end], [p_max, p_max], color='red', linestyle='--', linewidth=1.5, zorder=10)
                     if p_min > 0:
-                        ax_pressure.plot([idx_min, x_end], [p_min, p_min], color='green', linestyle='--', linewidth=1.5)
+                        ax_pressure.plot([idx_min, x_end], [p_min, p_min], color='green', linestyle='--', linewidth=1.5, zorder=10)
 
                     ax_pressure.set_yticks([]) 
                     ax_pressure.text(x_end + 0.5, p_max, f'{p_max:.1f}', color='red', va='center', fontsize=10, fontweight='bold')
@@ -206,7 +211,7 @@ def main():
                 st.dataframe(df.sort_index(ascending=False), use_container_width=True)
 
         # ---------------------------------------------------------
-        # Tab 2: 即時行情走勢 (改用 Yahoo Finance 數據源)
+        # Tab 2: 即時行情走勢 (Yahoo Finance)
         # ---------------------------------------------------------
         with tab2:
             st.subheader("📈 台指期即時走勢 (Yahoo Finance)")
@@ -218,13 +223,13 @@ def main():
 
                 if st.button("🔄 截取最新行情", type="primary"):
                     with st.spinner("連線 Yahoo Finance 中..."):
-                        # 呼叫我們新的 yfinance 函式
+                        # ★ 呼叫有加偽裝的函式
                         df_rt = fetch_realtime_data()
                         if df_rt is not None and not df_rt.empty:
                             st.session_state['realtime_df'] = df_rt
                             st.success(f"已更新")
                         else:
-                            st.warning("無法取得資料 (請檢查 requirements.txt 是否已安裝 yfinance)")
+                            st.warning("Yahoo Finance 無資料 (可能休市或連線被阻擋)")
 
             if st.session_state['realtime_df'] is not None:
                 df_chart_rt = st.session_state['realtime_df']
