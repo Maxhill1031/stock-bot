@@ -5,14 +5,22 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import timedelta, datetime
 import requests
-import yfinance as yf  # ★ 新增：Yahoo Finance 套件
-import pytz            # ★ 新增：時區處理
+
+# --- ★ 防崩潰引入機制 ★ ---
+# 這樣寫可以確保：就算你忘記改 requirements.txt，程式也不會直接掛掉
+# 每日盤後分析依然能正常顯示
+try:
+    import yfinance as yf
+    import pytz
+    HAS_YFINANCE = True
+except ImportError:
+    HAS_YFINANCE = False
 
 # --- 設定 ---
 SHEET_NAME = "Daily_Stock_Data"
 st.set_page_config(page_title="台股期貨AI儀表板", layout="wide")
 
-# --- 連接 Google Sheet (讀取日資料 - 完全不動) ---
+# --- 連接 Google Sheet (完全不動) ---
 def get_data():
     try:
         if "gcp_service_account" in st.secrets:
@@ -30,24 +38,25 @@ def get_data():
         st.error(f"資料庫連線失敗: {e}")
         return pd.DataFrame()
 
-# --- ★ 修改：改用 Yahoo Finance 抓取即時分K數據 (取代原本的 Wantgoo) ---
+# --- ★ 修改：Yahoo Finance 抓取函式 (含防呆) ---
 def fetch_realtime_data():
+    if not HAS_YFINANCE:
+        st.error("⚠️ 系統偵測到未安裝 `yfinance` 套件。請在 `requirements.txt` 中加入 `yfinance` 才能抓取即時資料。")
+        return None
+
     try:
-        # TX=F 是 Yahoo Finance 的台指期代號
-        # interval="1m" 代表抓取 1 分鐘線
         ticker = yf.Ticker("TX=F")
         df = ticker.history(period="1d", interval="1m")
         
         if df.empty:
             return None
         
-        # 處理時區問題 (轉為台灣時間)
+        # 處理時區
         if df.index.tzinfo is None:
              df.index = df.index.tz_localize('UTC').tz_convert('Asia/Taipei')
         else:
              df.index = df.index.tz_convert('Asia/Taipei')
         
-        # 重新命名欄位以符合 mplfinance 要求
         df = df.rename(columns={'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'})
         return df
     except Exception as e:
@@ -73,14 +82,12 @@ def display_card(label, value, color="black", help_text=""):
 
 # --- 主程式 ---
 def main():
-    # CSS 全局樣式
     st.markdown("""
         <style>
             .block-container { padding-top: 1rem; padding-bottom: 1rem; padding-left: 1rem; padding-right: 1rem; }
             .header-container { display: flex; align-items: baseline; padding-bottom: 8px; border-bottom: 1px solid #eee; margin-bottom: 15px; }
             .main-title { font-size: 1.5rem; font-weight: bold; color: #333; margin-right: 12px; }
             .sub-title { font-size: 0.8rem; color: #888; font-weight: normal; }
-            /* 調整 Tab 字體 */
             button[data-baseweb="tab"] > div { font-size: 1.1rem; font-weight: bold; }
         </style>
         <div class="header-container">
@@ -93,30 +100,31 @@ def main():
     df = get_data()
     
     if not df.empty:
-        # 資料預處理 (保留你原本的邏輯)
-        df['Date'] = pd.to_datetime(df['Date'])
-        df = df.sort_values(by="Date")
+        # 資料清洗 (防止 TypeError)
+        df.columns = df.columns.str.strip() 
         numeric_cols = ['Open', 'High', 'Low', 'Close', 'Upper_Pass', 'Mid_Pass', 'Lower_Pass', 'Divider', 'Long_Cost', 'Short_Cost', 'Sell_Pressure']
         for col in numeric_cols:
             if col in df.columns:
+                df[col] = df[col].astype(str).str.replace(',', '').replace('nan', '')
                 df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        df['Date'] = pd.to_datetime(df['Date'])
+        df = df.sort_values(by="Date")
         if 'Sell_Pressure' in df.columns:
             df['Sell_Pressure'] = df['Sell_Pressure'].fillna(0)
 
         last_row = df.iloc[-1]
         
         # 關鍵數值
-        ref_divider = last_row.get('Divider', 0)
-        ref_long = last_row.get('Long_Cost', 0)
-        ref_short = last_row.get('Short_Cost', 0)
+        ref_divider = float(last_row.get('Divider', 0))
+        ref_long = float(last_row.get('Long_Cost', 0))
+        ref_short = float(last_row.get('Short_Cost', 0))
 
         def fmt(val):
             try: return str(int(val))
             except: return "0"
 
-        # =========================================================
-        # ★ 建立頁籤 (Tabs)
-        # =========================================================
+        # 建立頁籤
         tab1, tab2 = st.tabs(["📅 每日盤後分析", "⚡ 即時行情走勢"])
 
         # ---------------------------------------------------------
@@ -133,4 +141,145 @@ def main():
             current_date = last_row['Date']
             first_day_this_month = current_date.replace(day=1)
             last_day_prev_month = first_day_this_month - timedelta(days=1)
-            target_year
+            target_year = last_day_prev_month.year
+            target_month = last_day_prev_month.month
+            
+            mask = (df['Date'].dt.year == target_year) & (df['Date'].dt.month == target_month)
+            prev_month_df = df[mask]
+            
+            if not prev_month_df.empty:
+                p_max = float(prev_month_df['Sell_Pressure'].max())
+                p_min = float(prev_month_df['Sell_Pressure'].min())
+                date_max = prev_month_df.loc[prev_month_df['Sell_Pressure'].idxmax(), 'Date']
+                date_min = prev_month_df.loc[prev_month_df['Sell_Pressure'].idxmin(), 'Date']
+            else:
+                p_max, p_min = 0.0, 0.0
+                date_max, date_min = current_date, current_date
+
+            df_chart = df.tail(60).set_index("Date")
+            
+            mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
+            s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
+            add_plots = []
+            if 'Sell_Pressure' in df_chart.columns:
+                add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='', alpha=0.3))
+
+            try:
+                fig, axlist = mpf.plot(
+                    df_chart, type='candle', style=s, title="", ylabel='', addplot=add_plots, 
+                    volume=False, panel_ratios=(3, 1), returnfig=True, figsize=(10, 5), tight_layout=True
+                )
+
+                xtick_locs = []
+                xtick_labels = []
+                for i, date_val in enumerate(df_chart.index):
+                    if i % 5 == 0:
+                        xtick_locs.append(i)
+                        xtick_labels.append(date_val.strftime('%Y-%m-%d'))
+                axlist[0].set_xticks(xtick_locs)
+                axlist[0].set_xticklabels(xtick_labels)
+
+                if len(axlist) > 2:
+                    ax_pressure = axlist[2]
+                    try: idx_max = df_chart.index.get_loc(date_max)
+                    except: idx_max = 0 
+                    try: idx_min = df_chart.index.get_loc(date_min)
+                    except: idx_min = 0
+                    x_end = len(df_chart)
+
+                    if p_max > 0:
+                        ax_pressure.plot([idx_max, x_end], [p_max, p_max], color='red', linestyle='--', linewidth=1.5, zorder=10)
+                    if p_min > 0:
+                        ax_pressure.plot([idx_min, x_end], [p_min, p_min], color='green', linestyle='--', linewidth=1.5, zorder=10)
+
+                    ax_pressure.set_yticks([]) 
+                    ax_pressure.text(x_end + 0.5, p_max, f'{p_max:.1f}', color='red', va='center', fontsize=10, fontweight='bold')
+                    ax_pressure.text(x_end + 0.5, p_min, f'{p_min:.1f}', color='green', va='center', fontsize=10, fontweight='bold')
+
+                st.pyplot(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"歷史圖表繪製錯誤: {e}")
+
+            with st.expander("查看詳細歷史數據"):
+                st.dataframe(df.sort_index(ascending=False), use_container_width=True)
+
+        # ---------------------------------------------------------
+        # Tab 2: 即時行情走勢 (Yahoo Finance)
+        # ---------------------------------------------------------
+        with tab2:
+            st.subheader("📈 台指期即時走勢 (Yahoo Finance)")
+            
+            col_btn, col_info = st.columns([1, 5])
+            with col_btn:
+                if 'realtime_df' not in st.session_state:
+                    st.session_state['realtime_df'] = None
+
+                if st.button("🔄 截取最新行情", type="primary"):
+                    # 檢查是否有安裝 yfinance
+                    if not HAS_YFINANCE:
+                        st.error("❌ 錯誤：找不到 yfinance 套件。請確認 requirements.txt 已更新。")
+                    else:
+                        with st.spinner("連線 Yahoo Finance 中..."):
+                            df_rt = fetch_realtime_data()
+                            if df_rt is not None and not df_rt.empty:
+                                st.session_state['realtime_df'] = df_rt
+                                st.success(f"已更新")
+                            else:
+                                st.warning("無法取得資料")
+
+            if st.session_state['realtime_df'] is not None:
+                df_chart_rt = st.session_state['realtime_df']
+                
+                line_div = [ref_divider] * len(df_chart_rt)
+                line_long = [ref_long] * len(df_chart_rt)
+                line_short = [ref_short] * len(df_chart_rt)
+
+                add_plots_rt = []
+                if ref_divider > 0:
+                     add_plots_rt.append(mpf.make_addplot(line_div, color='black', width=1.5))
+                if ref_long > 0:
+                     add_plots_rt.append(mpf.make_addplot(line_long, color='red', linestyle='--', width=1.2))
+                if ref_short > 0:
+                     add_plots_rt.append(mpf.make_addplot(line_short, color='green', linestyle='--', width=1.2))
+
+                mc_rt = mpf.make_marketcolors(up='r', down='g', inherit=True)
+                s_rt = mpf.make_mpf_style(marketcolors=mc_rt, gridstyle=':', y_on_right=True)
+
+                try:
+                    fig_rt, axlist_rt = mpf.plot(
+                        df_chart_rt, type='candle', style=s_rt, title="", ylabel='',
+                        addplot=add_plots_rt, volume=True, panel_ratios=(3, 1),
+                        returnfig=True, figsize=(10, 6), tight_layout=True
+                    )
+                    
+                    ax_rt = axlist_rt[0]
+                    x_pos = len(df_chart_rt) + 1
+                    
+                    if ref_divider > 0:
+                        ax_rt.text(x_pos, ref_divider, f'分界 {int(ref_divider)}', color='black', va='center', fontweight='bold')
+                    if ref_long > 0:
+                        ax_rt.text(x_pos, ref_long, f'多本 {int(ref_long)}', color='red', va='center', fontweight='bold')
+                    if ref_short > 0:
+                        ax_rt.text(x_pos, ref_short, f'空本 {int(ref_short)}', color='green', va='center', fontweight='bold')
+                    
+                    current_price = df_chart_rt['Close'].iloc[-1]
+                    ax_rt.text(x_pos, current_price, f'◀ {int(current_price)}', color='blue', va='center', fontweight='bold')
+
+                    st.pyplot(fig_rt, use_container_width=True)
+                    with col_info:
+                        last_time = df_chart_rt.index[-1].strftime('%H:%M')
+                        st.info(f"最新資料時間: {last_time} (含盤後/夜盤)")
+
+                except Exception as e:
+                    st.error(f"即時圖繪製錯誤: {e}")
+            else:
+                if HAS_YFINANCE:
+                    st.info("👈 請點擊左側按鈕載入即時行情")
+                else:
+                    st.warning("⚠️ 請先安裝 yfinance 套件才能使用此功能。")
+
+    else:
+        st.warning("⚠️ 資料庫為空")
+
+if __name__ == "__main__":
+    main()
