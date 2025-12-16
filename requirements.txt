@@ -4,7 +4,8 @@ requests
 mplfinance
 gspread
 oauth2client
-
+plotly
 lxml
 yfinance
 curl_cffi
+
