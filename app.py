@@ -42,7 +42,8 @@ def display_card(label, value, color="black", help_text=""):
             margin-bottom: 10px;
             " {tooltip_html}>
             <div style="font-size: 0.85rem; color: #666; margin-bottom: 2px;">{label}</div>
-            <div style="font-size: 1.8rem; font-weight: bold; color: {color}; line-height: 1.1;">{value}</div>
+            # 這裡稍微縮小一點字體，確保更長的數字也能塞入
+            <div style="font-size: 1.6rem; font-weight: bold; color: {color}; line-height: 1.1;">{value}</div>
         </div>
     """, unsafe_allow_html=True)
 
@@ -94,8 +95,9 @@ def main():
         ref_long = float(last_row.get('Long_Cost', 0))
         ref_short = float(last_row.get('Short_Cost', 0))
 
-        # --- 2. 顯示頂部資訊卡片 ---
-        c1, c2, c3, c4, c5 = st.columns(5)
+        # --- 2. 顯示頂部資訊卡片 (修改這裡) ---
+        # 使用比例 [1, 1, 2, 1, 1] 讓中間的 c3 (三關價) 變寬
+        c1, c2, c3, c4, c5 = st.columns([1, 1, 2, 1, 1])
         with c1: display_card("📅 最新日期", last_row['Date'].strftime("%Y-%m-%d"))
         with c2: display_card("⚖️ 明日多空分界", fmt(ref_divider), color="#333", help_text="(開+低+收)/3")
         with c3: display_card("🔮 明日三關價", f"{fmt(last_row.get('Upper_Pass',0))}/{fmt(last_row.get('Mid_Pass',0))}/{fmt(last_row.get('Lower_Pass',0))}", color="#555")
