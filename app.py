@@ -248,4 +248,24 @@ def main():
         # --- Tab D: 日 K ---
         with tab_d:
             # 傳入 max/min 的發生日期，讓圖表決定線要從哪裡開始畫
-            plot_interactive_chart(df.tail
+            plot_interactive_chart(df.tail(60), p_max, p_min, date_max, date_min)
+
+        # --- Tab W: 週 K ---
+        with tab_w:
+            df_w = resample_df(df, 'W-FRI')
+            plot_interactive_chart(df_w.tail(60))
+
+        # --- Tab M: 月 K ---
+        with tab_m:
+            df_m = resample_df(df, 'ME')
+            plot_interactive_chart(df_m.tail(60))
+
+        # --- 詳細數據 ---
+        with st.expander("查看詳細歷史數據"):
+            st.dataframe(df.sort_index(ascending=False), use_container_width=True)
+
+    else:
+        st.warning("⚠️ 資料庫為空或無法讀取，請檢查 Google Sheet 連線。")
+
+if __name__ == "__main__":
+    main()
