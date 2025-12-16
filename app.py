@@ -228,4 +228,5 @@ def main():
     with st.expander("查看詳細日歷史數據"):
         st.dataframe(df_analysis.sort_index(ascending=False), use_container_width=True)
 
-if
+if __name__ == "__main__":
+    main()
