@@ -61,12 +61,10 @@ def resample_df(df, rule):
     resampled = resampled.dropna(subset=['Open', 'High', 'Low', 'Close'])
     return resampled
 
-# --- ★ 核心：繪製互動式圖表 (Plotly - 無空隙版) ---
+# --- ★ 核心：繪製互動式圖表 (Plotly - 客製化 Tooltip) ---
 def plot_interactive_chart(df, p_max=0, p_min=0, date_max=None, date_min=None):
-    # 【關鍵修改 1】將索引轉為字串格式，讓 Plotly 把它當作「類別」而非連續時間
-    # 這樣可以強制消除假日空隙
+    # 複製一份資料並建立字串格式的日期，用於 X 軸 (消除假日空隙)
     df = df.copy()
-    # 記錄原本的時間物件用於比較，圖表顯示則用字串
     df['Date_Str'] = df.index.strftime('%Y-%m-%d')
     
     fig = make_subplots(
@@ -77,41 +75,53 @@ def plot_interactive_chart(df, p_max=0, p_min=0, date_max=None, date_min=None):
         subplot_titles=("指數走勢", "賣壓指標")
     )
 
-    # 1. 繪製 K 線圖 (使用 Date_Str 作為 X 軸)
+    # 1. 繪製 K 線圖
+    # ★ 修改重點：hovertemplate
+    # %{open:.0f} 代表顯示整數，不要 K，不要小數點
+    # <extra></extra> 是 Plotly 的語法，用來隱藏旁邊的 Trace 名稱標籤
+    hover_text_k = (
+        "<b>%{x}</b><br>" +
+        "開盤: %{open:.0f}<br>" +
+        "最高: %{high:.0f}<br>" +
+        "最低: %{low:.0f}<br>" +
+        "收盤: %{close:.0f}" +
+        "<extra></extra>" 
+    )
+
     fig.add_trace(go.Candlestick(
         x=df['Date_Str'], 
         open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
         increasing_line_color='red', decreasing_line_color='green',
-        name='K線'
+        name='K線',
+        hovertemplate=hover_text_k # 套用客製化格式
     ), row=1, col=1)
 
     # 2. 繪製賣壓 Bar 圖
+    hover_text_bar = (
+        "<b>%{x}</b><br>" +
+        "賣壓: %{y:.1f}" +
+        "<extra></extra>"
+    )
+
     fig.add_trace(go.Bar(
         x=df['Date_Str'], 
         y=df['Sell_Pressure'],
         marker_color='blue', opacity=0.3,
-        name='賣壓'
+        name='賣壓',
+        hovertemplate=hover_text_bar # 套用客製化格式
     ), row=2, col=1)
 
     # 3. 畫出上個月最大/最小賣壓虛線
-    # 【關鍵修改 2】計算線條的起始點
-    # 如果發生日期比圖表第一天還早，就從圖表最左邊開始畫 (代表延續)
-    # 如果發生日期在圖表範圍內，就從那天開始畫
-    
     chart_start_date = df.index[0]
     chart_end_date_str = df['Date_Str'].iloc[-1]
 
     # --- 處理最大賣壓紅線 ---
     if p_max > 0 and date_max is not None:
-        # 判斷起始點
         if date_max < chart_start_date:
-            start_x = df['Date_Str'].iloc[0] # 從畫面最左邊開始
+            start_x = df['Date_Str'].iloc[0]
         else:
-            # 找到該日期對應的字串 (如果該日期存在於資料中)
-            try:
-                start_x = date_max.strftime('%Y-%m-%d')
-            except:
-                start_x = df['Date_Str'].iloc[0]
+            try: start_x = date_max.strftime('%Y-%m-%d')
+            except: start_x = df['Date_Str'].iloc[0]
 
         fig.add_shape(type="line",
             x0=start_x, x1=chart_end_date_str, y0=p_max, y1=p_max,
@@ -129,10 +139,8 @@ def plot_interactive_chart(df, p_max=0, p_min=0, date_max=None, date_min=None):
         if date_min < chart_start_date:
             start_x = df['Date_Str'].iloc[0]
         else:
-            try:
-                start_x = date_min.strftime('%Y-%m-%d')
-            except:
-                start_x = df['Date_Str'].iloc[0]
+            try: start_x = date_min.strftime('%Y-%m-%d')
+            except: start_x = df['Date_Str'].iloc[0]
 
         fig.add_shape(type="line",
             x0=start_x, x1=chart_end_date_str, y0=p_min, y1=p_min,
@@ -150,15 +158,17 @@ def plot_interactive_chart(df, p_max=0, p_min=0, date_max=None, date_min=None):
         margin=dict(l=10, r=50, t=30, b=10),
         height=500,
         xaxis_rangeslider_visible=False,
-        hovermode='x unified',
+        # hovermode='x unified', # 移除這行，改回預設，避免出現額外的整合資訊框
         showlegend=False,
         plot_bgcolor='white',
-        paper_bgcolor='white'
+        paper_bgcolor='white',
+        # 強制 Y 軸不顯示 K (例如 28k)，而是顯示完整數字
+        yaxis=dict(tickformat=".0f"), 
     )
     
-    # 【關鍵修改 3】強制 X 軸為類別模式 (Category)，這會移除所有無資料的空隙
+    # 強制 X 軸為類別模式 (Category)，移除假日空隙
     fig.update_xaxes(type='category', showgrid=True, gridcolor='#eee', gridwidth=1, 
-                     tickmode='auto', nticks=10) # 讓 Plotly 自動決定顯示幾個日期標籤，避免擁擠
+                     tickmode='auto', nticks=10)
     
     fig.update_yaxes(showgrid=True, gridcolor='#eee', gridwidth=1)
 
@@ -199,10 +209,7 @@ def main():
         if 'Sell_Pressure' in df.columns:
             df['Sell_Pressure'] = df['Sell_Pressure'].fillna(0)
         
-        # 設定 Date 為 Index
         df = df.set_index('Date')
-
-        # 最新一筆資料
         last_row = df.iloc[-1]
         
         def fmt(val):
@@ -221,7 +228,7 @@ def main():
         with c4: display_card("🔴 外資多方成本", fmt(ref_long), color="#d63031")
         with c5: display_card("🟢 外資空方成本", fmt(ref_short), color="#00b894")
 
-        # --- 3. 準備「上個月賣壓」數據 (僅用於日K) ---
+        # --- 3. 準備「上個月賣壓」數據 ---
         current_date = last_row.name
         first_day_this_month = current_date.replace(day=1)
         last_day_prev_month = first_day_this_month - timedelta(days=1)
@@ -245,22 +252,17 @@ def main():
         # ==========================================
         tab_d, tab_w, tab_m = st.tabs(["D", "W", "M"])
 
-        # --- Tab D: 日 K ---
         with tab_d:
-            # 傳入 max/min 的發生日期，讓圖表決定線要從哪裡開始畫
             plot_interactive_chart(df.tail(60), p_max, p_min, date_max, date_min)
 
-        # --- Tab W: 週 K ---
         with tab_w:
             df_w = resample_df(df, 'W-FRI')
             plot_interactive_chart(df_w.tail(60))
 
-        # --- Tab M: 月 K ---
         with tab_m:
             df_m = resample_df(df, 'ME')
             plot_interactive_chart(df_m.tail(60))
 
-        # --- 詳細數據 ---
         with st.expander("查看詳細歷史數據"):
             st.dataframe(df.sort_index(ascending=False), use_container_width=True)
 
