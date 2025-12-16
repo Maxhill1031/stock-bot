@@ -61,9 +61,14 @@ def resample_df(df, rule):
     resampled = resampled.dropna(subset=['Open', 'High', 'Low', 'Close'])
     return resampled
 
-# --- ★ 核心：繪製互動式圖表 (Plotly) ---
+# --- ★ 核心：繪製互動式圖表 (Plotly - 無空隙版) ---
 def plot_interactive_chart(df, p_max=0, p_min=0, date_max=None, date_min=None):
-    # 建立子圖表：上層是 K 線 (row=1)，下層是賣壓 (row=2)
+    # 【關鍵修改 1】將索引轉為字串格式，讓 Plotly 把它當作「類別」而非連續時間
+    # 這樣可以強制消除假日空隙
+    df = df.copy()
+    # 記錄原本的時間物件用於比較，圖表顯示則用字串
+    df['Date_Str'] = df.index.strftime('%Y-%m-%d')
+    
     fig = make_subplots(
         rows=2, cols=1, 
         shared_xaxes=True, 
@@ -72,10 +77,9 @@ def plot_interactive_chart(df, p_max=0, p_min=0, date_max=None, date_min=None):
         subplot_titles=("指數走勢", "賣壓指標")
     )
 
-    # 1. 繪製 K 線圖 (台灣配色：紅漲綠跌)
-    # Plotly 預設綠漲紅跌，需手動設定 increasing/decreasing
+    # 1. 繪製 K 線圖 (使用 Date_Str 作為 X 軸)
     fig.add_trace(go.Candlestick(
-        x=df.index,
+        x=df['Date_Str'], 
         open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
         increasing_line_color='red', decreasing_line_color='green',
         name='K線'
@@ -83,58 +87,81 @@ def plot_interactive_chart(df, p_max=0, p_min=0, date_max=None, date_min=None):
 
     # 2. 繪製賣壓 Bar 圖
     fig.add_trace(go.Bar(
-        x=df.index, 
+        x=df['Date_Str'], 
         y=df['Sell_Pressure'],
         marker_color='blue', opacity=0.3,
         name='賣壓'
     ), row=2, col=1)
 
-    # 3. 畫出上個月最大/最小賣壓虛線 (僅當 p_max > 0 時)
-    # 注意：在 Plotly 中，畫線是使用 "shapes"
-    if p_max > 0:
-        # 最大賣壓紅虛線
+    # 3. 畫出上個月最大/最小賣壓虛線
+    # 【關鍵修改 2】計算線條的起始點
+    # 如果發生日期比圖表第一天還早，就從圖表最左邊開始畫 (代表延續)
+    # 如果發生日期在圖表範圍內，就從那天開始畫
+    
+    chart_start_date = df.index[0]
+    chart_end_date_str = df['Date_Str'].iloc[-1]
+
+    # --- 處理最大賣壓紅線 ---
+    if p_max > 0 and date_max is not None:
+        # 判斷起始點
+        if date_max < chart_start_date:
+            start_x = df['Date_Str'].iloc[0] # 從畫面最左邊開始
+        else:
+            # 找到該日期對應的字串 (如果該日期存在於資料中)
+            try:
+                start_x = date_max.strftime('%Y-%m-%d')
+            except:
+                start_x = df['Date_Str'].iloc[0]
+
         fig.add_shape(type="line",
-            x0=df.index[0], x1=df.index[-1], y0=p_max, y1=p_max,
+            x0=start_x, x1=chart_end_date_str, y0=p_max, y1=p_max,
             line=dict(color="red", width=1.5, dash="dash"),
             row=2, col=1
         )
-        # 標註文字
         fig.add_annotation(
-            x=df.index[-1], y=p_max, text=f"{p_max:.1f}",
+            x=chart_end_date_str, y=p_max, text=f"{p_max:.1f}",
             showarrow=False, xanchor="left", yanchor="middle",
             font=dict(color="red"), row=2, col=1
         )
 
-    if p_min > 0:
-        # 最小賣壓綠虛線
+    # --- 處理最小賣壓綠線 ---
+    if p_min > 0 and date_min is not None:
+        if date_min < chart_start_date:
+            start_x = df['Date_Str'].iloc[0]
+        else:
+            try:
+                start_x = date_min.strftime('%Y-%m-%d')
+            except:
+                start_x = df['Date_Str'].iloc[0]
+
         fig.add_shape(type="line",
-            x0=df.index[0], x1=df.index[-1], y0=p_min, y1=p_min,
+            x0=start_x, x1=chart_end_date_str, y0=p_min, y1=p_min,
             line=dict(color="green", width=1.5, dash="dash"),
             row=2, col=1
         )
-        # 標註文字
         fig.add_annotation(
-            x=df.index[-1], y=p_min, text=f"{p_min:.1f}",
+            x=chart_end_date_str, y=p_min, text=f"{p_min:.1f}",
             showarrow=False, xanchor="left", yanchor="middle",
             font=dict(color="green"), row=2, col=1
         )
 
     # 4. 版面調整
     fig.update_layout(
-        margin=dict(l=10, r=50, t=30, b=10), # 邊界
-        height=500, # 圖表高度
-        xaxis_rangeslider_visible=False, # 隱藏底部的範圍滑桿 (太佔空間)
-        hovermode='x unified', # 游標移上去時，顯示同一時間點的所有數據
-        showlegend=False, # 隱藏圖例
-        plot_bgcolor='white', # 背景白
+        margin=dict(l=10, r=50, t=30, b=10),
+        height=500,
+        xaxis_rangeslider_visible=False,
+        hovermode='x unified',
+        showlegend=False,
+        plot_bgcolor='white',
         paper_bgcolor='white'
     )
     
-    # 設定網格線
-    fig.update_xaxes(showgrid=True, gridcolor='#eee', gridwidth=1)
+    # 【關鍵修改 3】強制 X 軸為類別模式 (Category)，這會移除所有無資料的空隙
+    fig.update_xaxes(type='category', showgrid=True, gridcolor='#eee', gridwidth=1, 
+                     tickmode='auto', nticks=10) # 讓 Plotly 自動決定顯示幾個日期標籤，避免擁擠
+    
     fig.update_yaxes(showgrid=True, gridcolor='#eee', gridwidth=1)
 
-    # 渲染圖表
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -147,7 +174,6 @@ def main():
             .header-container { display: flex; align-items: baseline; padding-bottom: 8px; border-bottom: 1px solid #eee; margin-bottom: 15px; }
             .main-title { font-size: 1.5rem; font-weight: bold; color: #333; margin-right: 12px; }
             .sub-title { font-size: 0.8rem; color: #888; font-weight: normal; }
-            /* 調整 Tab 標籤樣式 */
             button[data-baseweb="tab"] > div { font-size: 1.2rem; font-weight: bold; width: 50px; text-align: center; }
         </style>
         <div class="header-container">
@@ -208,8 +234,11 @@ def main():
         if not prev_month_df.empty:
             p_max = float(prev_month_df['Sell_Pressure'].max())
             p_min = float(prev_month_df['Sell_Pressure'].min())
+            date_max = prev_month_df['Sell_Pressure'].idxmax()
+            date_min = prev_month_df['Sell_Pressure'].idxmin()
         else:
             p_max, p_min = 0.0, 0.0
+            date_max, date_min = None, None
 
         # ==========================================
         # ★ 標籤切換區 (D / W / M)
@@ -218,27 +247,5 @@ def main():
 
         # --- Tab D: 日 K ---
         with tab_d:
-            # 使用 Plotly 畫圖，傳入賣壓紅綠線數值
-            plot_interactive_chart(df.tail(60), p_max, p_min)
-
-        # --- Tab W: 週 K ---
-        with tab_w:
-            df_w = resample_df(df, 'W-FRI')
-            # 週線不傳入 p_max, p_min，所以不畫紅綠線
-            plot_interactive_chart(df_w.tail(60))
-
-        # --- Tab M: 月 K ---
-        with tab_m:
-            df_m = resample_df(df, 'ME')
-            # 月線不傳入 p_max, p_min
-            plot_interactive_chart(df_m.tail(60))
-
-        # --- 詳細數據 ---
-        with st.expander("查看詳細歷史數據"):
-            st.dataframe(df.sort_index(ascending=False), use_container_width=True)
-
-    else:
-        st.warning("⚠️ 資料庫為空或無法讀取，請檢查 Google Sheet 連線。")
-
-if __name__ == "__main__":
-    main()
+            # 傳入 max/min 的發生日期，讓圖表決定線要從哪裡開始畫
+            plot_interactive_chart(df.tail
