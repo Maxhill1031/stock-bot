@@ -42,7 +42,6 @@ def display_card(label, value, color="black", help_text=""):
             margin-bottom: 10px;
             " {tooltip_html}>
             <div style="font-size: 0.85rem; color: #666; margin-bottom: 2px;">{label}</div>
-            # 這裡稍微縮小一點字體，確保更長的數字也能塞入
             <div style="font-size: 1.6rem; font-weight: bold; color: {color}; line-height: 1.1;">{value}</div>
         </div>
     """, unsafe_allow_html=True)
@@ -68,25 +67,20 @@ def main():
     
     if not df.empty:
         # --- 資料清洗 ---
-        # 確保 Date 是時間格式並排序
         df['Date'] = pd.to_datetime(df['Date'])
         df = df.sort_values(by="Date")
 
-        # 處理數值欄位 (移除逗號, 轉為 float)
         numeric_cols = ['Open', 'High', 'Low', 'Close', 'Upper_Pass', 'Mid_Pass', 'Lower_Pass', 'Divider', 'Long_Cost', 'Short_Cost', 'Sell_Pressure', 'Volume']
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace(',', '').replace('nan', '')
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         
-        # 填補空值
         if 'Sell_Pressure' in df.columns:
             df['Sell_Pressure'] = df['Sell_Pressure'].fillna(0)
 
-        # 取得最新一筆資料
         last_row = df.iloc[-1]
         
-        # 格式化數值 (轉整數顯示)
         def fmt(val):
             try: return str(int(val))
             except: return "0"
@@ -95,9 +89,10 @@ def main():
         ref_long = float(last_row.get('Long_Cost', 0))
         ref_short = float(last_row.get('Short_Cost', 0))
 
-        # --- 2. 顯示頂部資訊卡片 (修改這裡) ---
-        # 使用比例 [1, 1, 2, 1, 1] 讓中間的 c3 (三關價) 變寬
+        # --- 2. 顯示頂部資訊卡片 ---
+        # ★ 修改比例：中間 (c3) 設為 2，其餘設為 1
         c1, c2, c3, c4, c5 = st.columns([1, 1, 2, 1, 1])
+        
         with c1: display_card("📅 最新日期", last_row['Date'].strftime("%Y-%m-%d"))
         with c2: display_card("⚖️ 明日多空分界", fmt(ref_divider), color="#333", help_text="(開+低+收)/3")
         with c3: display_card("🔮 明日三關價", f"{fmt(last_row.get('Upper_Pass',0))}/{fmt(last_row.get('Mid_Pass',0))}/{fmt(last_row.get('Lower_Pass',0))}", color="#555")
@@ -117,7 +112,6 @@ def main():
         if not prev_month_df.empty:
             p_max = float(prev_month_df['Sell_Pressure'].max())
             p_min = float(prev_month_df['Sell_Pressure'].min())
-            # 取得發生日期的 datetime
             date_max = prev_month_df.loc[prev_month_df['Sell_Pressure'].idxmax(), 'Date']
             date_min = prev_month_df.loc[prev_month_df['Sell_Pressure'].idxmin(), 'Date']
         else:
@@ -127,11 +121,9 @@ def main():
         # --- 4. 繪製圖表 (只取最後 60 筆) ---
         df_chart = df.tail(60).set_index("Date")
         
-        # 設定 K 線圖樣式
         mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
         
-        # 設定副圖 (賣壓柱狀圖)
         add_plots = []
         if 'Sell_Pressure' in df_chart.columns:
             add_plots.append(mpf.make_addplot(df_chart['Sell_Pressure'], panel=1, color='blue', type='bar', ylabel='賣壓', alpha=0.3))
@@ -143,7 +135,6 @@ def main():
                 returnfig=True, figsize=(12, 6), tight_layout=True
             )
 
-            # 自定義 X 軸標籤 (避免擁擠，每 5 天顯示一個)
             xtick_locs = []
             xtick_labels = []
             for i, date_val in enumerate(df_chart.index):
@@ -153,28 +144,23 @@ def main():
             axlist[0].set_xticks(xtick_locs)
             axlist[0].set_xticklabels(xtick_labels)
 
-            # 在副圖畫出「上月最大/最小賣壓」虛線
             if len(axlist) > 2:
                 ax_pressure = axlist[2]
                 
-                # 找出日期在目前圖表中的索引位置
                 try: idx_max = df_chart.index.get_loc(date_max)
                 except: idx_max = 0 
                 try: idx_min = df_chart.index.get_loc(date_min)
                 except: idx_min = 0
                 x_end = len(df_chart)
 
-                # 畫紅線 (最大賣壓)
                 if p_max > 0:
                     ax_pressure.plot([idx_max, x_end], [p_max, p_max], color='red', linestyle='--', linewidth=1.5)
                     ax_pressure.text(x_end + 0.5, p_max, f'{p_max:.1f}', color='red', va='center', fontsize=10, fontweight='bold')
                 
-                # 畫綠線 (最小賣壓)
                 if p_min > 0:
                     ax_pressure.plot([idx_min, x_end], [p_min, p_min], color='green', linestyle='--', linewidth=1.5)
                     ax_pressure.text(x_end + 0.5, p_min, f'{p_min:.1f}', color='green', va='center', fontsize=10, fontweight='bold')
 
-                # 隱藏副圖的 Y 軸刻度，保持乾淨
                 ax_pressure.set_yticks([]) 
 
             st.pyplot(fig, use_container_width=True)
